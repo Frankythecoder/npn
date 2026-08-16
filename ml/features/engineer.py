@@ -223,6 +223,16 @@ def transform_one(
             f"unseen account {account_id}: TimeSinceLastTx_Hours filled with the "
             f"training median ({artifacts.time_since_last_tx_median:.2f}h)"
         )
+    elif gap < 0:
+        # A transaction that predates this account's last known activity would
+        # otherwise produce a negative gap never seen in training (spec 2.1),
+        # flagging the row for its timestamp rather than its content.
+        warnings.append(
+            f"transaction predates account {account_id}'s last known activity: "
+            f"TimeSinceLastTx_Hours filled with the training median "
+            f"({artifacts.time_since_last_tx_median:.2f}h)"
+        )
+        gap = artifacts.time_since_last_tx_median
 
     city = str(raw_txn["Location"])
     if city in artifacts.location_freq:

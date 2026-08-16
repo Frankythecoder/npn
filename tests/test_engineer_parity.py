@@ -80,6 +80,21 @@ def test_unseen_account_uses_the_median_gap_and_warns(raw, built):
     assert any("unseen account" in w for w in warnings)
 
 
+def test_negative_gap_is_clamped_to_the_median_and_warns(raw, built):
+    """A transaction predating the account's last known activity must not
+    produce a negative gap never seen in training (spec 2.1) - it gets the
+    same median-fill treatment as an unseen account."""
+    _, artifacts, profiles = built
+    txn = raw.iloc[0].to_dict()
+    last_tx = profiles.account_last_tx[txn["AccountID"]]
+    txn["TransactionDate"] = last_tx - pd.Timedelta(days=10)
+    frame, warnings = transform_one(txn, artifacts, profiles)
+    assert frame.iloc[0]["TimeSinceLastTx_Hours"] == pytest.approx(
+        artifacts.time_since_last_tx_median
+    )
+    assert any("predates" in w for w in warnings)
+
+
 def test_unseen_city_uses_the_default_frequency_and_warns(raw, built):
     _, artifacts, profiles = built
     txn = raw.iloc[0].to_dict()
