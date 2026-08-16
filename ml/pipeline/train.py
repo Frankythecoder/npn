@@ -1,12 +1,18 @@
 """Offline training run: fit everything, report, and write the artifact bundle."""
 from __future__ import annotations
 
+import hashlib
 import itertools
+import json
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
+import numpy
 import pandas as pd
+import shap
+import sklearn
+import xgboost
 from sklearn.preprocessing import RobustScaler, StandardScaler
 
 from ml.config import Config
@@ -50,6 +56,26 @@ def _build_frames(X: pd.DataFrame, continuous_columns: list[str]) -> tuple[dict,
         ),
     }
     return scalers, frames
+
+
+def _library_versions() -> dict[str, str]:
+    """Pinned dependency versions, so an unpickling break has something to
+    compare the bundle against (spec 9: pinning exists precisely to stop a
+    scikit-learn minor-version drift from breaking unpickling)."""
+    return {
+        "sklearn": sklearn.__version__,
+        "xgboost": xgboost.__version__,
+        "numpy": numpy.__version__,
+        "pandas": pd.__version__,
+        "shap": shap.__version__,
+    }
+
+
+def _config_hash(cfg: Config) -> str:
+    """SHA-256 of the full parsed config tree, so a bundle records exactly
+    what configuration produced it."""
+    payload = json.dumps(cfg.to_dict(), sort_keys=True, default=str)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 def run_training(cfg: Config, dest: str | Path | None = None) -> TrainingReport:
@@ -122,13 +148,22 @@ def run_training(cfg: Config, dest: str | Path | None = None) -> TrainingReport:
         "version": datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ"),
         "trained_at": datetime.now(timezone.utc).isoformat(),
         "n_rows": len(X),
+        "config_hash": _config_hash(cfg),
+        "versions": _library_versions(),
         "contamination": cfg.get("detectors.contamination"),
         "ensemble_threshold": threshold,
         "votes_required": votes_required(len(live), threshold),
         "live_detectors": [d.name for d in live],
         "rate_table": rate_table,
         "flag_counts": flag_counts,
-        "vote_histogram": vote_histogram,
+        "agreement": agreement,
+        # JSON round-trips dict keys as strings, so int keys here would
+        # silently become strings only after the first save/load cycle,
+        # leaving the persisted manifest's keys inconsistent with the
+        # in-process TrainingReport's. Use strings from the start so the
+        # persisted structure is self-consistent on both sides.
+        "vote_histogram": {str(k): v for k, v in vote_histogram.items()},
+        "threshold_sweep": {str(k): v for k, v in threshold_sweep.items()},
         "ensemble_rate": report.ensemble_rate,
         "surrogate_auc": surrogate.auc,
         "surrogate_agreement": surrogate.agreement,

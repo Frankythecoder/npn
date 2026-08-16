@@ -12,6 +12,7 @@ from pathlib import Path
 import pandas as pd
 
 from ml.config import Config
+from ml.detectors.registry import DETECTOR_ORDER
 from ml.ensemble.voting import combine_one
 from ml.explain.shap_explainer import ShapExplainer
 from ml.features.engineer import transform_one
@@ -28,11 +29,12 @@ class Scorer:
         self.profiles = bundle.profile_store
 
         # Only detectors that can score an unseen row take part. load_bundle
-        # returns them alphabetically, so impose the reporting order here.
-        order = ["isolation_forest", "lof", "one_class_svm", "dbscan"]
+        # returns them alphabetically, so impose the registry's canonical
+        # order here rather than re-declaring it as a second literal that
+        # could silently drift from DETECTOR_ORDER.
         self.live = sorted(
             (d for d in bundle.detectors.values() if d.live_scorable),
-            key=lambda d: order.index(d.name),
+            key=lambda d: DETECTOR_ORDER.index(d.name),
         )
 
         self.explainer = ShapExplainer(

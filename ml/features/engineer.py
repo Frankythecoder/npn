@@ -10,6 +10,22 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 
+
+def _to_naive(ts: pd.Timestamp) -> pd.Timestamp:
+    """Normalise to tz-naive, the convention every stored/training timestamp uses.
+
+    Incoming transactions may arrive as tz-aware ISO-8601 (the exact shape a JSON
+    API carries, and the shape score_transaction's own `scored_at` field emits).
+    Subtracting a tz-aware timestamp from a tz-naive one raises TypeError, so this
+    is the single normalisation boundary every conversion of an incoming
+    timestamp goes through.
+    """
+    ts = pd.Timestamp(ts)
+    if ts.tzinfo is not None:
+        ts = ts.tz_localize(None)
+    return ts
+
+
 CATEGORICAL_LEVELS: dict[str, list[str]] = {
     "TransactionType": ["Credit", "Debit"],
     "Channel": ["ATM", "Branch", "Online"],
@@ -61,6 +77,7 @@ class FeatureArtifacts:
     continuous_columns: list[str]
     categorical_levels: dict[str, list[str]]
     time_since_last_tx_median: float
+    time_since_last_tx_max: float
 
 
 @dataclass
@@ -88,14 +105,14 @@ class ProfileStore:
         previous = self.account_last_tx.get(account_id)
         if previous is None:
             return default, False
-        delta = (pd.Timestamp(txn_date) - previous).total_seconds() / 3600.0
+        delta = (_to_naive(txn_date) - previous).total_seconds() / 3600.0
         return delta, True
 
     def observe(
         self, account_id: str, device_id: str, txn_date: pd.Timestamp
     ) -> None:
         """Record a transaction so subsequent scores see it as history."""
-        txn_date = pd.Timestamp(txn_date)
+        txn_date = _to_naive(txn_date)
         day = self._day_key(txn_date)
         previous = self.account_last_tx.get(account_id)
         if previous is None or txn_date > previous:
@@ -146,6 +163,7 @@ def build_training_frame(
         / 3600.0
     ).reindex(df.index)
     gap_median = float(gap.median())
+    gap_max = float(gap.max())
     df["TimeSinceLastTx_Hours"] = gap.fillna(gap_median)
 
     df["DailyAccountVolume"] = _chronological_running_count(df, "AccountID", day)
@@ -170,6 +188,7 @@ def build_training_frame(
         continuous_columns=list(CONTINUOUS_COLUMNS),
         categorical_levels={k: list(v) for k, v in CATEGORICAL_LEVELS.items()},
         time_since_last_tx_median=gap_median,
+        time_since_last_tx_max=gap_max,
     )
 
     profiles = ProfileStore()
@@ -211,7 +230,7 @@ def transform_one(
         raise ValueError(f"transform_one: missing required fields {missing}")
 
     warnings: list[str] = []
-    txn_date = pd.Timestamp(raw_txn["TransactionDate"])
+    txn_date = _to_naive(raw_txn["TransactionDate"])
     account_id = str(raw_txn["AccountID"])
     device_id = str(raw_txn["DeviceID"])
 
@@ -233,6 +252,24 @@ def transform_one(
             f"({artifacts.time_since_last_tx_median:.2f}h)"
         )
         gap = artifacts.time_since_last_tx_median
+    elif gap > artifacts.time_since_last_tx_max:
+        # A transaction dated long after this account's last known activity
+        # (e.g. "today" against training-era history) produces a gap far
+        # outside anything in training, which flags the row on its timestamp
+        # rather than its content -- the same failure mode as the negative
+        # tail above, on the other side of the distribution. Clamp to the
+        # observed training MAXIMUM, not the median: a long dormancy is a
+        # genuine signal (dormant-account reactivation is real fraud
+        # behaviour), so capping at the top of the seen range preserves it
+        # without letting the value become an out-of-distribution outlier
+        # that dominates every distance-based detector.
+        warnings.append(
+            f"gap since account {account_id}'s last transaction ({gap:.2f}h) "
+            f"exceeds the training range (max {artifacts.time_since_last_tx_max:.2f}h): "
+            f"TimeSinceLastTx_Hours capped at the training maximum "
+            f"({artifacts.time_since_last_tx_max:.2f}h)"
+        )
+        gap = artifacts.time_since_last_tx_max
 
     city = str(raw_txn["Location"])
     if city in artifacts.location_freq:

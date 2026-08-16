@@ -1,7 +1,11 @@
 """Artifact bundle persistence.
 
-Takes a filesystem path. Version directories are written whole and are treated as
-immutable by readers.
+Takes a filesystem path and writes flat into it -- there is no versioned
+sub-directory layout here; train.py reuses the same `dest` (e.g. `artifacts/`)
+across retrains. Because the directory is reused rather than written once and
+treated as immutable, save_bundle clears stale detector pickles and any stale
+surrogate file before writing, so retraining with a shrunk detector roster
+cannot leave orphan files behind for load_bundle's glob to pick back up.
 """
 from __future__ import annotations
 
@@ -32,9 +36,24 @@ class ArtifactBundle:
 
 
 def save_bundle(bundle: ArtifactBundle, dest: str | Path) -> None:
-    """Write the bundle to `dest`, creating it if needed."""
+    """Write the bundle to `dest`, creating it if needed.
+
+    `dest` is reused across retrains rather than versioned, so any detector
+    pickles and surrogate file already there are cleared first -- otherwise a
+    retrain with a shrunk roster (or one that drops the surrogate) would
+    leave orphans that load_bundle's glob picks back up alongside the new
+    ones.
+    """
     dest = Path(dest)
-    (dest / DETECTOR_DIR).mkdir(parents=True, exist_ok=True)
+    detector_dir = dest / DETECTOR_DIR
+    if detector_dir.exists():
+        for stale in detector_dir.glob("*.pkl"):
+            stale.unlink()
+    detector_dir.mkdir(parents=True, exist_ok=True)
+
+    surrogate_path = dest / "surrogate_xgb.json"
+    if surrogate_path.exists():
+        surrogate_path.unlink()
 
     with open(dest / MANIFEST_NAME, "w", encoding="utf-8") as fh:
         json.dump(bundle.manifest, fh, indent=2, default=str)
@@ -45,10 +64,10 @@ def save_bundle(bundle: ArtifactBundle, dest: str | Path) -> None:
     joblib.dump(bundle.explainer_state, dest / "explainer_state.pkl")
 
     for name, detector in bundle.detectors.items():
-        joblib.dump(detector, dest / DETECTOR_DIR / f"{name}.pkl")
+        joblib.dump(detector, detector_dir / f"{name}.pkl")
 
     if bundle.surrogate is not None:
-        bundle.surrogate.save_model(str(dest / "surrogate_xgb.json"))
+        bundle.surrogate.save_model(str(surrogate_path))
 
 
 def load_bundle(src: str | Path) -> ArtifactBundle:

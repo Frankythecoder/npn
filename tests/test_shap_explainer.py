@@ -33,6 +33,45 @@ def test_every_feature_column_has_a_phrase():
         assert col in FEATURE_PHRASES or col in ONE_HOT_PHRASES, col
 
 
+def test_login_attempts_phrase_is_a_number_of_noun_phrase():
+    """'an unusually high login attempts' is not English; needs 'number of'."""
+    assert FEATURE_PHRASES["LoginAttempts"] == "number of login attempts"
+
+
+def test_location_freq_phrase_is_a_noun_phrase_not_a_clause():
+    """'the how common this location is' does not compose with the
+    templates' 'the {...}' / 'due to {...}' slots -- a noun phrase does."""
+    phrase = FEATURE_PHRASES["Location_Freq"]
+    assert not phrase.startswith("how "), phrase
+    assert "an unusually high " + phrase == "an unusually high location familiarity"
+
+
+def test_every_feature_phrase_composes_into_both_templates():
+    """Every FEATURE_PHRASES entry must read as a noun phrase across the
+    high, low and mid percentile forms, in both sentence templates. A bare
+    leading 'how' or an embedded copula ('is'/'was') is the signature of a
+    clause smuggled in where a noun phrase is required -- the exact shape
+    of both copy defects this guards against."""
+    for column, noun in FEATURE_PHRASES.items():
+        assert not noun.startswith("how "), f"{column}: {noun!r} reads as a clause"
+        assert " is " not in noun and " was " not in noun, (
+            f"{column}: {noun!r} reads as a clause"
+        )
+        for phrase in (
+            f"an unusually high {noun} (95th percentile)",
+            f"an unusually low {noun} (5th percentile)",
+            f"the {noun} (50th percentile)",
+        ):
+            assert not phrase.startswith("an unusually high how"), phrase
+            flagged = f"Flagged primarily due to {phrase}."
+            clean = (
+                "No strong anomaly indicators. The closest contributors were "
+                f"{phrase}."
+            )
+            assert "due to an unusually high login attempts" not in flagged
+            assert "were the how" not in clean
+
+
 def test_explain_returns_the_documented_keys(fitted):
     explainer, X, _ = fitted
     result = explainer.explain(X.iloc[[0]], is_anomaly=False)
@@ -110,26 +149,61 @@ def test_ordinal_suffix_handles_the_teens_exception():
 
 @pytest.fixture(scope="module")
 def one_hot_driven():
+    """A model where Channel_Online genuinely drives the label.
+
+    Built from real 0.0/1.0 one-hot draws -- the state the actual feature
+    matrix can produce -- rather than the previous fixture's
+    `rng.uniform(3, 5)`, a value the real matrix can never hold. That
+    unreachable-value fixture is exactly why _phrase_for ignoring `value`
+    for one-hot columns went undetected: every row it generated looked
+    "set", so the unset branch was never exercised.
+    """
     rng = np.random.default_rng(7)
     n = 1200
     X = pd.DataFrame({col: rng.normal(size=n) for col in FEATURE_COLUMNS})
-    X["Channel_Online"] = rng.uniform(-1, 1, size=n)
-    X.loc[: n // 20, "Channel_Online"] = rng.uniform(3, 5, size=n // 20 + 1)
-    y = (X["Channel_Online"] > 2).astype(int).to_numpy()
+    channel = rng.integers(0, 3, size=n)  # 0=ATM, 1=Branch, 2=Online
+    X["Channel_ATM"] = (channel == 0).astype(float)
+    X["Channel_Branch"] = (channel == 1).astype(float)
+    X["Channel_Online"] = (channel == 2).astype(float)
+    y = (X["Channel_Online"] == 1.0).astype(int).to_numpy()
     result = train_surrogate(X, y, test_size=0.25, random_state=7)
     state = build_explainer_state(X)
     return ShapExplainer(result.model, FEATURE_COLUMNS, state), X, y
 
 
-def test_one_hot_top_feature_renders_as_a_noun_phrase(one_hot_driven):
+def test_phrase_for_one_hot_matches_the_actual_value(fitted):
+    """Direct, model-independent check: every one-hot phrase must follow the
+    value passed in, not just the column name."""
+    explainer, _, _ = fitted
+    for column, (set_phrase, unset_phrase) in ONE_HOT_PHRASES.items():
+        assert explainer._phrase_for(column, 1.0, percentile=50.0) == set_phrase
+        assert explainer._phrase_for(column, 0.0, percentile=50.0) == unset_phrase
+
+
+def test_one_hot_set_value_renders_as_a_noun_phrase(one_hot_driven):
     explainer, X, y = one_hot_driven
-    idx = int(np.argmax(y))
+    idx = int(np.argmax(y))  # a row where Channel_Online is genuinely 1.0
+    assert X.iloc[idx]["Channel_Online"] == 1.0
     result = explainer.explain(X.iloc[[idx]], is_anomaly=True)
     assert result["top_features"][0]["feature"] == "Channel_Online"
     text = result["plain_english"]
     assert "an online transaction" in text
+    assert "not an online transaction" not in text
     # The clause form ("the transaction was made online") does not compose
     # with the "Flagged primarily due to ..." slot; guard against regressing
     # to a clause fragment mid-sentence.
     assert "due to the transaction was" not in text
     assert "due to the customer is" not in text
+
+
+def test_one_hot_unset_value_renders_the_negated_phrase(one_hot_driven):
+    """A row where Channel_Online is 0.0 must never be described as an
+    online transaction -- that would state a false fact about the row."""
+    explainer, X, y = one_hot_driven
+    idx = int(np.argmin(y))  # a row where Channel_Online is genuinely 0.0
+    assert X.iloc[idx]["Channel_Online"] == 0.0
+    result = explainer.explain(X.iloc[[idx]], is_anomaly=False)
+    names = [f["feature"] for f in result["top_features"]]
+    assert "Channel_Online" in names
+    text = result["plain_english"]
+    assert "not an online transaction" in text

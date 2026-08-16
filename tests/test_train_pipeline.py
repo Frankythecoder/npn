@@ -70,6 +70,48 @@ def test_bundle_is_written_and_loadable(trained):
     assert bundle.feature_artifacts.feature_columns
 
 
+def test_manifest_records_library_versions_and_a_config_hash(trained):
+    """Spec 9: pinning exists specifically to stop a scikit-learn
+    minor-version drift from breaking unpickling -- without recording the
+    versions that produced the bundle, nothing catches that drift."""
+    _, dest = trained
+    bundle = load_bundle(dest)
+    versions = bundle.manifest["versions"]
+    for lib in ("sklearn", "xgboost", "numpy", "pandas", "shap"):
+        assert lib in versions
+        assert isinstance(versions[lib], str) and versions[lib]
+
+    assert isinstance(bundle.manifest["config_hash"], str)
+    assert len(bundle.manifest["config_hash"]) == 64  # sha256 hex digest
+
+    # Deterministic: hashing the same config twice must produce the same hash.
+    from ml.pipeline.train import _config_hash
+
+    assert bundle.manifest["config_hash"] == _config_hash(Config.load())
+
+
+def test_manifest_records_agreement_and_threshold_sweep(trained):
+    """Both are computed and printed by format_report but must also be
+    persisted, not just displayed."""
+    report, dest = trained
+    bundle = load_bundle(dest)
+    assert bundle.manifest["agreement"] == report.agreement
+    assert set(bundle.manifest["threshold_sweep"]) == {"1", "2", "3", "4"}
+    assert bundle.manifest["threshold_sweep"]["1"] == report.threshold_sweep[1]
+
+
+def test_manifest_vote_histogram_keys_survive_a_reload(trained):
+    """manifest['vote_histogram'] uses int keys in-process; JSON turns them
+    into strings on disk. Both sides must use string keys so
+    bundle.manifest['vote_histogram']['0'] does not KeyError after a
+    reload while report.vote_histogram[0] still works in-process."""
+    report, dest = trained
+    bundle = load_bundle(dest)
+    assert set(bundle.manifest["vote_histogram"]) == {"0", "1", "2", "3", "4"}
+    for v in range(5):
+        assert bundle.manifest["vote_histogram"][str(v)] == report.vote_histogram[v]
+
+
 def test_report_formats_without_error(trained):
     report, _ = trained
     text = format_report(report)

@@ -1,6 +1,7 @@
 """Loads and validates ml/config.yaml."""
 from __future__ import annotations
 
+import copy
 from pathlib import Path
 from typing import Any
 
@@ -33,6 +34,10 @@ class Config:
         path = Path(path) if path is not None else CONFIG_PATH
         with open(path, "r", encoding="utf-8") as fh:
             return cls(yaml.safe_load(fh))
+
+    def to_dict(self) -> dict:
+        """Return a deep copy of the parsed config tree (e.g. for provenance hashing)."""
+        return copy.deepcopy(self._data)
 
     def get(self, dotted: str, default: Any = _UNSET) -> Any:
         node: Any = self._data

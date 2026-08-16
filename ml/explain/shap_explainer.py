@@ -15,28 +15,39 @@ FEATURE_PHRASES: dict[str, str] = {
     "TransactionAmount": "transaction amount",
     "CustomerAge": "customer age",
     "TransactionDuration": "transaction duration",
-    "LoginAttempts": "login attempts",
+    "LoginAttempts": "number of login attempts",
     "AccountBalance": "account balance",
     "TimeSinceLastTx_Hours": "gap since the account's last transaction",
     "DailyAccountVolume": "number of transactions on this account today",
     "UtilizationRatio": "share of the account balance drained",
     "DailyDeviceVelocity": "number of transactions from this device today",
-    "Location_Freq": "how common this location is",
+    "Location_Freq": "location familiarity",
 }
 
 # One-hot features are facts, not magnitudes: "unusually high Channel_Online"
 # would be meaningless. Phrased as noun phrases (not clauses) so they compose
-# with the sentence templates' "due to {...}" / "were {...}" slots.
-ONE_HOT_PHRASES: dict[str, str] = {
-    "TransactionType_Credit": "a credit transaction",
-    "TransactionType_Debit": "a debit transaction",
-    "Channel_ATM": "an ATM transaction",
-    "Channel_Branch": "an in-branch transaction",
-    "Channel_Online": "an online transaction",
-    "CustomerOccupation_Doctor": "a doctor's account",
-    "CustomerOccupation_Engineer": "an engineer's account",
-    "CustomerOccupation_Retired": "a retired customer's account",
-    "CustomerOccupation_Student": "a student's account",
+# with the sentence templates' "due to {...}" / "were {...}" slots. Each entry
+# is (set_phrase, unset_phrase): the feature's value (0.0 or 1.0) picks which
+# one renders, so the sentence never asserts a level the row does not have.
+ONE_HOT_PHRASES: dict[str, tuple[str, str]] = {
+    "TransactionType_Credit": ("a credit transaction", "not a credit transaction"),
+    "TransactionType_Debit": ("a debit transaction", "not a debit transaction"),
+    "Channel_ATM": ("an ATM transaction", "not an ATM transaction"),
+    "Channel_Branch": ("an in-branch transaction", "not an in-branch transaction"),
+    "Channel_Online": ("an online transaction", "not an online transaction"),
+    "CustomerOccupation_Doctor": ("a doctor's account", "not a doctor's account"),
+    "CustomerOccupation_Engineer": (
+        "an engineer's account",
+        "not an engineer's account",
+    ),
+    "CustomerOccupation_Retired": (
+        "a retired customer's account",
+        "not a retired customer's account",
+    ),
+    "CustomerOccupation_Student": (
+        "a student's account",
+        "not a student's account",
+    ),
 }
 
 HIGH_PERCENTILE = 90.0
@@ -97,7 +108,11 @@ class ShapExplainer:
 
     def _phrase_for(self, column: str, value: float, percentile: float) -> str:
         if column in ONE_HOT_PHRASES:
-            return ONE_HOT_PHRASES[column]
+            set_phrase, unset_phrase = ONE_HOT_PHRASES[column]
+            # The one-hot's own value picks the phrase: rendering the "set"
+            # phrase regardless of value would state a false fact whenever
+            # SHAP surfaces a column that is actually 0 for this row.
+            return set_phrase if value >= 0.5 else unset_phrase
         noun = FEATURE_PHRASES.get(column, column)
         rank = _ordinal(round(percentile))
         if percentile >= HIGH_PERCENTILE:

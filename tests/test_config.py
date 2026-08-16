@@ -30,3 +30,14 @@ def test_get_raises_on_missing_key_without_default():
 def test_missing_required_key_rejected_at_load():
     with pytest.raises(ValueError, match="missing required key"):
         Config({"data": {}})
+
+
+def test_to_dict_round_trips_the_parsed_tree():
+    cfg = Config.load()
+    data = cfg.to_dict()
+    assert data["detectors"]["contamination"] == 0.05
+    assert data["ensemble"]["threshold"] == 0.5
+    # Must be a real copy, not a view whose mutation corrupts the instance
+    # a caller (e.g. a manifest hash) keeps hashing against later.
+    data["ensemble"]["threshold"] = 999
+    assert cfg.get("ensemble.threshold") == 0.5

@@ -1,7 +1,11 @@
 """Builds the detector roster from config, in one place.
 
-train.py and score.py both call this, so they cannot disagree about which
-detectors exist or which of them vote.
+train.py calls build_detectors/live_detectors to fit the roster and decide
+which detectors vote. score.py does not call either function -- it scores
+against detectors already fitted and persisted by train.py -- but it does
+import DETECTOR_ORDER to sort them, so the two entry points still share one
+source of truth for detector naming and ordering rather than being able to
+silently disagree about it.
 """
 from __future__ import annotations
 

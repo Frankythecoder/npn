@@ -95,3 +95,56 @@ def test_manifest_is_human_readable_json(tmp_path, bundle):
 def test_load_rejects_a_missing_directory(tmp_path):
     with pytest.raises(FileNotFoundError):
         load_bundle(tmp_path / "does-not-exist")
+
+
+def test_save_bundle_clears_stale_detector_pickles_and_surrogate(tmp_path, bundle):
+    """`dest` is reused across retrains (see the module docstring), not
+    written once per version. A retrain with a shrunk detector roster, or
+    one that drops the surrogate, must not leave orphan files behind for
+    load_bundle's glob to pick back up alongside the new ones."""
+    from xgboost import XGBClassifier
+
+    Xs = pd.DataFrame({"a": [0.0, 1.0, 2.0, 3.0], "b": [1.0, 0.0, 1.0, 0.0]})
+    ys = np.array([0, 1, 0, 1])
+    surrogate = XGBClassifier(n_estimators=5, max_depth=2)
+    surrogate.fit(Xs, ys)
+
+    first = ArtifactBundle(
+        manifest={"version": "first"},
+        scalers=bundle.scalers,
+        feature_artifacts=bundle.feature_artifacts,
+        profile_store=bundle.profile_store,
+        detectors={
+            "isolation_forest": bundle.detectors["isolation_forest"],
+            "extra_detector": bundle.detectors["isolation_forest"],
+        },
+        surrogate=surrogate,
+        explainer_state=bundle.explainer_state,
+    )
+    save_bundle(first, tmp_path)
+    assert (tmp_path / "detectors" / "isolation_forest.pkl").exists()
+    assert (tmp_path / "detectors" / "extra_detector.pkl").exists()
+    assert (tmp_path / "surrogate_xgb.json").exists()
+
+    second = ArtifactBundle(
+        manifest={"version": "second"},
+        scalers=bundle.scalers,
+        feature_artifacts=bundle.feature_artifacts,
+        profile_store=bundle.profile_store,
+        detectors={"isolation_forest": bundle.detectors["isolation_forest"]},
+        surrogate=None,
+        explainer_state=bundle.explainer_state,
+    )
+    save_bundle(second, tmp_path)
+
+    remaining = sorted(p.name for p in (tmp_path / "detectors").glob("*.pkl"))
+    assert remaining == ["isolation_forest.pkl"], (
+        "extra_detector.pkl is a stale orphan from the first save"
+    )
+    assert not (tmp_path / "surrogate_xgb.json").exists(), (
+        "surrogate_xgb.json is a stale orphan from the first save"
+    )
+
+    loaded = load_bundle(tmp_path)
+    assert set(loaded.detectors) == {"isolation_forest"}
+    assert loaded.surrogate is None

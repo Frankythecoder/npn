@@ -136,3 +136,64 @@ def test_zero_account_balance_is_rejected(raw, built):
     txn["AccountBalance"] = 0
     with pytest.raises(ValueError, match="AccountBalance must be non-zero"):
         transform_one(txn, artifacts, profiles)
+
+
+def test_gap_beyond_the_training_max_is_clamped_and_warns(raw, built):
+    """A transaction dated long after this account's last known activity
+    (e.g. 'today' against training-era history) must not produce a gap
+    wildly outside anything in training - that flags the row for its
+    timestamp rather than its content, spec 2.1's founding failure mode
+    on the positive tail instead of the negative one."""
+    _, artifacts, profiles = built
+    txn = raw.iloc[0].to_dict()
+    last_tx = profiles.account_last_tx[txn["AccountID"]]
+    txn["TransactionDate"] = last_tx + pd.Timedelta(
+        hours=artifacts.time_since_last_tx_max + 1000
+    )
+    frame, warnings = transform_one(txn, artifacts, profiles)
+    assert frame.iloc[0]["TimeSinceLastTx_Hours"] == pytest.approx(
+        artifacts.time_since_last_tx_max
+    )
+    assert any("exceeds the training range" in w for w in warnings)
+
+
+def test_gap_at_exactly_the_training_max_is_not_clamped(raw, built):
+    """The boundary itself must not trigger the clamp - only values
+    strictly beyond it, matching the negative-gap guard's `< 0` boundary."""
+    _, artifacts, profiles = built
+    txn = raw.iloc[0].to_dict()
+    last_tx = profiles.account_last_tx[txn["AccountID"]]
+    txn["TransactionDate"] = last_tx + pd.Timedelta(
+        hours=artifacts.time_since_last_tx_max
+    )
+    frame, warnings = transform_one(txn, artifacts, profiles)
+    assert frame.iloc[0]["TimeSinceLastTx_Hours"] == pytest.approx(
+        artifacts.time_since_last_tx_max
+    )
+    assert not any("exceeds the training range" in w for w in warnings)
+
+
+def test_tz_aware_z_suffixed_timestamp_is_accepted_for_a_seen_account(raw, built):
+    """The exact ISO-8601 shape a JSON API carries, and the shape
+    score_transaction's own scored_at field emits, must not raise
+    TypeError for an account seen in training."""
+    _, artifacts, profiles = built
+    txn = raw.iloc[0].to_dict()
+    last_tx = profiles.account_last_tx[txn["AccountID"]]
+    naive = last_tx + pd.Timedelta(hours=5)
+    txn["TransactionDate"] = naive.strftime("%Y-%m-%dT%H:%M:%S") + "Z"
+    frame, warnings = transform_one(txn, artifacts, profiles)
+    assert frame.iloc[0]["TimeSinceLastTx_Hours"] == pytest.approx(5.0, rel=1e-6)
+    assert not any("predates" in w or "exceeds" in w for w in warnings)
+
+
+def test_tz_aware_offset_suffixed_timestamp_is_accepted_for_a_seen_account(raw, built):
+    """Same as the Z-suffix case, for a numeric UTC offset instead."""
+    _, artifacts, profiles = built
+    txn = raw.iloc[0].to_dict()
+    last_tx = profiles.account_last_tx[txn["AccountID"]]
+    naive = last_tx + pd.Timedelta(hours=5)
+    txn["TransactionDate"] = naive.strftime("%Y-%m-%dT%H:%M:%S") + "+05:30"
+    frame, warnings = transform_one(txn, artifacts, profiles)
+    assert frame.iloc[0]["TimeSinceLastTx_Hours"] == pytest.approx(5.0, rel=1e-6)
+    assert not any("predates" in w or "exceeds" in w for w in warnings)
