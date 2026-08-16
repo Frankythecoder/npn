@@ -1,0 +1,39 @@
+data:
+  csv_path: original.csv
+
+detectors:
+  contamination: 0.05
+  random_state: 42
+  isolation_forest:
+    n_estimators: 200
+  lof:
+    n_neighbors: 20
+  one_class_svm:
+    kernel: rbf
+    gamma: scale
+    nu: 0.05
+  dbscan:
+    eps: 3.0
+    min_samples: 5
+  mcd: {}
+  gmm:
+    n_components: 5
+    covariance_type: full
+  kmeans:
+    n_clusters: 8
+    n_init: 10
+  pca_reconstruction:
+    n_components: 0.95
+
+ensemble:
+  threshold: 0.5
+
+surrogate:
+  min_auc: 0.95
+  test_size: 0.25
+
+validation:
+  sane_band: [0.03, 0.07]
+
+storage:
+  local_dir: artifacts
