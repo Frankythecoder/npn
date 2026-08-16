@@ -1,6 +1,5 @@
 import warnings
 
-import numpy as np
 import pandas as pd
 import pytest
 from sklearn.preprocessing import StandardScaler
