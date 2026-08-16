@@ -45,8 +45,6 @@ def test_spec_6_3_ensemble_rate_is_in_the_target_band(trained):
 
 def test_spec_6_4_flagged_rows_have_higher_utilization(trained):
     """The ensemble must be finding drained accounts, not noise."""
-    import pandas as pd
-
     from ml.data.loader import load_raw
     from ml.detectors.registry import live_detectors
     from ml.ensemble.voting import combine_matrix
