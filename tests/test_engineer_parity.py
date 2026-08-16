@@ -113,3 +113,11 @@ def test_missing_required_field_is_rejected(built):
     _, artifacts, profiles = built
     with pytest.raises(ValueError, match="missing required fields"):
         transform_one({"TransactionAmount": 10.0}, artifacts, profiles)
+
+
+def test_zero_account_balance_is_rejected(raw, built):
+    _, artifacts, profiles = built
+    txn = raw.iloc[0].to_dict()
+    txn["AccountBalance"] = 0
+    with pytest.raises(ValueError, match="AccountBalance must be non-zero"):
+        transform_one(txn, artifacts, profiles)
