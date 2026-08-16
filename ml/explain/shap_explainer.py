@@ -25,21 +25,34 @@ FEATURE_PHRASES: dict[str, str] = {
 }
 
 # One-hot features are facts, not magnitudes: "unusually high Channel_Online"
-# would be meaningless.
+# would be meaningless. Phrased as noun phrases (not clauses) so they compose
+# with the sentence templates' "due to {...}" / "were {...}" slots.
 ONE_HOT_PHRASES: dict[str, str] = {
-    "TransactionType_Credit": "the transaction was a credit",
-    "TransactionType_Debit": "the transaction was a debit",
-    "Channel_ATM": "the transaction was made at an ATM",
-    "Channel_Branch": "the transaction was made at a branch",
-    "Channel_Online": "the transaction was made online",
-    "CustomerOccupation_Doctor": "the customer is a doctor",
-    "CustomerOccupation_Engineer": "the customer is an engineer",
-    "CustomerOccupation_Retired": "the customer is retired",
-    "CustomerOccupation_Student": "the customer is a student",
+    "TransactionType_Credit": "a credit transaction",
+    "TransactionType_Debit": "a debit transaction",
+    "Channel_ATM": "an ATM transaction",
+    "Channel_Branch": "an in-branch transaction",
+    "Channel_Online": "an online transaction",
+    "CustomerOccupation_Doctor": "a doctor's account",
+    "CustomerOccupation_Engineer": "an engineer's account",
+    "CustomerOccupation_Retired": "a retired customer's account",
+    "CustomerOccupation_Student": "a student's account",
 }
 
 HIGH_PERCENTILE = 90.0
 LOW_PERCENTILE = 10.0
+
+
+def _ordinal(n: int) -> str:
+    """Render an integer with its English ordinal suffix (1st, 2nd, 3rd, 4th...).
+
+    Handles the 11th/12th/13th exception to the usual 1/2/3 -> st/nd/rd rule.
+    """
+    if 10 <= n % 100 <= 20:
+        suffix = "th"
+    else:
+        suffix = {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
+    return f"{n}{suffix}"
 
 
 def build_explainer_state(X_train: pd.DataFrame) -> dict:
@@ -86,11 +99,12 @@ class ShapExplainer:
         if column in ONE_HOT_PHRASES:
             return ONE_HOT_PHRASES[column]
         noun = FEATURE_PHRASES.get(column, column)
+        rank = _ordinal(round(percentile))
         if percentile >= HIGH_PERCENTILE:
-            return f"an unusually high {noun} ({percentile:.0f}th percentile)"
+            return f"an unusually high {noun} ({rank} percentile)"
         if percentile <= LOW_PERCENTILE:
-            return f"an unusually low {noun} ({percentile:.0f}th percentile)"
-        return f"the {noun} ({percentile:.0f}th percentile)"
+            return f"an unusually low {noun} ({rank} percentile)"
+        return f"the {noun} ({rank} percentile)"
 
     def explain(
         self, row: pd.DataFrame, is_anomaly: bool, top_n: int = 3
