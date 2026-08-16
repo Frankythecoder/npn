@@ -177,3 +177,90 @@ def build_training_frame(
         profiles.observe(row.AccountID, row.DeviceID, row.TransactionDate)
 
     return frame, artifacts, profiles
+
+
+RAW_INPUT_FIELDS = [
+    "AccountID",
+    "DeviceID",
+    "Location",
+    "TransactionDate",
+    "TransactionAmount",
+    "AccountBalance",
+    "CustomerAge",
+    "TransactionDuration",
+    "LoginAttempts",
+    "TransactionType",
+    "Channel",
+    "CustomerOccupation",
+]
+
+
+def transform_one(
+    raw_txn: dict,
+    artifacts: FeatureArtifacts,
+    profiles: ProfileStore,
+) -> tuple[pd.DataFrame, list[str]]:
+    """Engineer a single incoming transaction into the frozen 19-column frame.
+
+    Returns the frame and a list of human-readable warnings. Unseen accounts,
+    cities and categorical levels degrade to documented defaults rather than
+    raising, so an unexpected input is visible instead of fatal.
+    """
+    missing = [f for f in RAW_INPUT_FIELDS if f not in raw_txn]
+    if missing:
+        raise ValueError(f"transform_one: missing required fields {missing}")
+
+    warnings: list[str] = []
+    txn_date = pd.Timestamp(raw_txn["TransactionDate"])
+    account_id = str(raw_txn["AccountID"])
+    device_id = str(raw_txn["DeviceID"])
+
+    gap, seen = profiles.gap_hours(
+        account_id, txn_date, artifacts.time_since_last_tx_median
+    )
+    if not seen:
+        warnings.append(
+            f"unseen account {account_id}: TimeSinceLastTx_Hours filled with the "
+            f"training median ({artifacts.time_since_last_tx_median:.2f}h)"
+        )
+
+    city = str(raw_txn["Location"])
+    if city in artifacts.location_freq:
+        location_freq = artifacts.location_freq[city]
+    else:
+        location_freq = artifacts.location_freq_default
+        warnings.append(
+            f"unseen location {city!r}: Location_Freq set to the training minimum "
+            f"({artifacts.location_freq_default})"
+        )
+
+    balance = float(raw_txn["AccountBalance"])
+    if balance == 0:
+        raise ValueError("transform_one: AccountBalance must be non-zero")
+
+    values: dict[str, float] = {
+        "TransactionAmount": float(raw_txn["TransactionAmount"]),
+        "CustomerAge": float(raw_txn["CustomerAge"]),
+        "TransactionDuration": float(raw_txn["TransactionDuration"]),
+        "LoginAttempts": float(raw_txn["LoginAttempts"]),
+        "AccountBalance": balance,
+        "TimeSinceLastTx_Hours": float(gap),
+        # Self-inclusive: this transaction counts itself, exactly as a lone
+        # training row is counted once.
+        "DailyAccountVolume": float(profiles.account_day_count(account_id, txn_date) + 1),
+        "UtilizationRatio": float(raw_txn["TransactionAmount"]) / balance,
+        "DailyDeviceVelocity": float(profiles.device_day_count(device_id, txn_date) + 1),
+        "Location_Freq": float(location_freq),
+    }
+
+    for prefix, levels in artifacts.categorical_levels.items():
+        supplied = raw_txn[prefix]
+        if supplied not in levels:
+            warnings.append(
+                f"unseen {prefix} {supplied!r}: all {prefix} indicators set to 0"
+            )
+        for level in levels:
+            values[f"{prefix}_{level}"] = float(supplied == level)
+
+    frame = pd.DataFrame([values])[artifacts.feature_columns]
+    return frame, warnings
