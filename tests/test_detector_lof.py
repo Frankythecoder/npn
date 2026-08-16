@@ -1,3 +1,4 @@
+import numpy as np
 import pandas as pd
 import pytest
 from sklearn.preprocessing import RobustScaler
@@ -68,6 +69,54 @@ def test_lof_score_direction(fitted, unscaled):
     # would just flag the 126 most normal rows instead). This test would fail
     # if the minus sign were removed from _training_scores, because then the
     # flagged rows would be the least anomalous, not the most.
+    #
+    # Note: fit_flags_ is derived solely from _training_scores (the
+    # novelty=False path). It says nothing about the sign of _score (the
+    # novelty=True/live path) -- see test_lof_live_score_direction below.
     flagged_util = unscaled.loc[fitted.fit_flags_ == 1, "UtilizationRatio"].mean()
     normal_util = unscaled.loc[fitted.fit_flags_ == 0, "UtilizationRatio"].mean()
     assert flagged_util > normal_util * 3  # Flagged should be at least 3x higher
+
+
+def test_lof_live_score_direction(fitted, scaled, unscaled):
+    # Verify that negating score_samples in _score is correct. This exercises
+    # the novelty=True live path -- the one score()/flag() actually use --
+    # which test_lof_score_direction above does not touch. live_threshold_ is
+    # calibrated as a percentile of _score's own output, so a sign flip in
+    # _score would still flag ~5% of rows (the flag rate would be unchanged);
+    # it would just flag the 5% *least* anomalous rows instead. This test
+    # would fail in that case because flagged rows would have lower
+    # UtilizationRatio than normal rows, not higher.
+    live_flags = fitted.flag(scaled)
+    flagged_util = unscaled.loc[live_flags == 1, "UtilizationRatio"].mean()
+    normal_util = unscaled.loc[live_flags == 0, "UtilizationRatio"].mean()
+    assert flagged_util > normal_util * 3  # Flagged should be at least 3x higher
+
+
+def test_score_percentile_ranks_against_the_live_distribution(fitted):
+    # score_percentile is overridden on LOFDetector to rank against
+    # live_train_scores_ -- the distribution score() actually emits -- rather
+    # than the base class's train_scores_ (spec 4.5). This was previously
+    # untested.
+    below_min = fitted.live_train_scores_.min() - 1.0
+    above_max = fitted.live_train_scores_.max() + 1.0
+    assert fitted.score_percentile(below_min) == pytest.approx(0.0)
+    assert fitted.score_percentile(above_max) == pytest.approx(100.0)
+
+    expected = fitted.score_percentile(fitted.live_threshold_)
+    assert 93.0 <= expected <= 97.0
+
+    # train_scores_ and live_train_scores_ turn out to be similarly shaped
+    # for this dataset, so a bare "lands near 95" check above would still
+    # pass even if the override silently fell back to ranking against
+    # train_scores_ instead. Corrupt train_scores_ and confirm the result is
+    # unaffected, which proves the override actually consults
+    # live_train_scores_ and not train_scores_.
+    original_train_scores = fitted.train_scores_
+    try:
+        fitted.train_scores_ = np.zeros_like(fitted.train_scores_)
+        assert fitted.score_percentile(fitted.live_threshold_) == pytest.approx(
+            expected
+        )
+    finally:
+        fitted.train_scores_ = original_train_scores
