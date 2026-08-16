@@ -11,6 +11,12 @@ from ml.features.engineer import build_training_frame
 
 
 @pytest.fixture(scope="module")
+def unscaled():
+    X, _, _ = build_training_frame(load_raw(Config.load().get("data.csv_path")))
+    return X
+
+
+@pytest.fixture(scope="module")
 def scaled():
     X, _, _ = build_training_frame(load_raw(Config.load().get("data.csv_path")))
     return pd.DataFrame(StandardScaler().fit_transform(X), columns=X.columns)
@@ -59,3 +65,27 @@ def test_isolation_forest_is_deterministic(scaled):
         contamination=0.05, n_estimators=200, random_state=42
     ).fit(scaled)
     assert np.array_equal(a.fit_flags_, b.fit_flags_)
+
+
+def test_isolation_forest_score_direction(scaled, unscaled):
+    # Verify that negating decision_function is correct: flagged rows should
+    # have higher UtilizationRatio than normal rows. This test would fail if
+    # the minus sign were removed from _score, because then anomalies would
+    # be the lowest-scoring rows.
+    det = IsolationForestDetector(contamination=0.05, n_estimators=200, random_state=42)
+    det.fit(scaled)
+    flagged_util = unscaled.loc[det.fit_flags_ == 1, "UtilizationRatio"].mean()
+    normal_util = unscaled.loc[det.fit_flags_ == 0, "UtilizationRatio"].mean()
+    assert flagged_util > normal_util * 3  # Flagged should be at least 3x higher
+
+
+def test_one_class_svm_score_direction(scaled, unscaled):
+    # Verify that negating decision_function is correct: flagged rows should
+    # have higher UtilizationRatio than normal rows. This test would fail if
+    # the minus sign were removed from _score, because then anomalies would
+    # be the lowest-scoring rows.
+    det = OneClassSVMDetector(contamination=0.05, kernel="rbf", gamma="scale", nu=0.05)
+    det.fit(scaled)
+    flagged_util = unscaled.loc[det.fit_flags_ == 1, "UtilizationRatio"].mean()
+    normal_util = unscaled.loc[det.fit_flags_ == 0, "UtilizationRatio"].mean()
+    assert flagged_util > normal_util * 3  # Flagged should be at least 3x higher
