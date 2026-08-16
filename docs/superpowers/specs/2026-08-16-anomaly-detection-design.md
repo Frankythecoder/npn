@@ -169,7 +169,7 @@ selects its 7 by name. There remains one feature-engineering code path, and
 
 | Feature | Live computation |
 |---|---|
-| `TimeSinceLastTx_Hours` | `txn_date - profiles.account_last_tx[acct]`; training median (936.22h) if the account is unseen |
+| `TimeSinceLastTx_Hours` | `txn_date - profiles.account_last_tx[acct]`, then bounded to the training range (see below); training median (936.22h) if the account is unseen |
 | `DailyAccountVolume` | `account_day_counts.get((acct, day), 0) + 1` |
 | `DailyDeviceVelocity` | `device_day_counts.get((device, day), 0) + 1` |
 | `UtilizationRatio` | `amount / balance` — computable from the row alone |
@@ -180,6 +180,33 @@ Daily counts are self-inclusive, so a lone injected transaction receives 1 —
 identical to how a lone training row receives 1. Unseen categorical levels produce
 an all-zero group rather than an error, and are reported in the result payload so
 the condition is visible rather than silent.
+
+### 3.4 `TimeSinceLastTx_Hours` must be bounded on both sides
+
+The raw serving-time subtraction can produce values on either side of the training
+range, and in both cases the effect is the failure §2.1 exists to prevent: the
+transaction is flagged for its **timestamp** rather than its **content**. Training
+gaps span 0.01h to 7,512.07h, so `FeatureArtifacts` persists both
+`time_since_last_tx_median` and `time_since_last_tx_max`, and `transform_one`
+clamps outside that range, appending a warning in each case.
+
+**Below zero** — the transaction predates the account's last known activity, i.e.
+out-of-order arrival. Clamp to the **median**. There is no meaningful gap to report,
+and the median is the neutral value already used for an unseen account.
+
+**Above the training maximum** — most commonly a transaction dated *now* against an
+account whose history ends when the dataset does. A transaction dated today produces
+roughly 24,000h against a 7,512h maximum: 3.2× beyond anything the detectors have
+seen. Left unclamped this pins LOF, One-Class SVM and DBSCAN to the 100th percentile
+and flags an entirely ordinary transaction. Clamp to the **maximum**, not the median:
+a long dormancy is a genuine signal — dormant-account reactivation is real fraud
+behaviour — and clamping to the median would erase it. Clamping to the observed
+maximum preserves the meaning "as dormant as anything in training" without letting
+an artefact of the dataset's age dominate every distance-based detector.
+
+Both bounds matter for the demonstration specifically: §12 requires a preset that
+returns clean, and without the upper bound no transaction dated today against a known
+account can return clean.
 
 ## 4. Detector layer
 
