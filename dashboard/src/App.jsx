@@ -20,6 +20,10 @@ export default function App() {
   // back to the Scenarios tab, and so the feed and the batch share one decisions
   // map. Null means the live feed owns the main column.
   const [batch, setBatch] = useState(null);
+  // True while a CSV is being scored. The feed fills with the uploaded rows as
+  // the chunks land, and offering a decision on each one mid-run asks the
+  // operator to review a list that is still being written.
+  const [scoring, setScoring] = useState(false);
 
   // A locally-injected result is prepended immediately rather than waiting for
   // the next poll, so the demo reads as instant. The next poll replaces the
@@ -116,17 +120,16 @@ export default function App() {
 
       <div className="body">
         <aside className="rail">
-          <InputTabs onScored={handleScored} onBatch={setBatch} />
+          <InputTabs
+            onScored={handleScored}
+            onBatch={setBatch}
+            onBusyChange={setScoring}
+          />
         </aside>
 
         <main className="main">
           {batch ? (
-            <BatchResults
-              batch={batch}
-              decisions={decisions}
-              onDecide={handleDecide}
-              onClose={() => setBatch(null)}
-            />
+            <BatchResults batch={batch} onClose={() => setBatch(null)} />
           ) : (
             <LiveFeed
               results={results}
@@ -139,6 +142,7 @@ export default function App() {
               freshKey={freshKey}
               decisions={decisions}
               onDecide={handleDecide}
+              scoring={scoring}
             />
           )}
         </main>
@@ -158,6 +162,7 @@ function LiveFeed({
   freshKey,
   decisions,
   onDecide,
+  scoring,
 }) {
   return (
     <>
@@ -165,15 +170,23 @@ function LiveFeed({
         <span className="micro">Recent transactions</span>
         <span className="micro">
           <span className="num">{flagged}</span> flagged of{" "}
-          <span className="num">{results.length}</span> ·{" "}
-          <span className="num">{reviewed}</span> reviewed
-          {overrides > 0 && (
+          <span className="num">{results.length}</span>
+          {/* The review tallies are suppressed alongside the per-row controls
+              while an upload is scoring — a running count of decisions nobody
+              can make yet is noise. */}
+          {!scoring && (
             <>
               {" · "}
-              <span className="override-count">
-                <span className="num">{overrides}</span> override
-                {overrides === 1 ? "" : "s"}
-              </span>
+              <span className="num">{reviewed}</span> reviewed
+              {overrides > 0 && (
+                <>
+                  {" · "}
+                  <span className="override-count">
+                    <span className="num">{overrides}</span> override
+                    {overrides === 1 ? "" : "s"}
+                  </span>
+                </>
+              )}
             </>
           )}
         </span>
@@ -188,6 +201,7 @@ function LiveFeed({
         freshKey={freshKey}
         decisions={decisions}
         onDecide={onDecide}
+        scoring={scoring}
       />
 
       <p className="footnote">

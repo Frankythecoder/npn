@@ -1,5 +1,3 @@
-import { APPROVE, BLOCK, decisionKey, isOverride } from "../decisions.js";
-
 // The four detectors that vote, in the registry's canonical order. Looked up by
 // name rather than by position so a change to DETECTOR_ORDER cannot silently
 // retitle a column.
@@ -23,14 +21,13 @@ const money = new Intl.NumberFormat("en-US", {
  * and carry no decision to make, so they stay counted in the summary above
  * rather than filling a table nobody reads top to bottom.
  *
- * Decisions go through the same localStorage store as the live feed, so the
- * override count in the masthead stays true across both views.
+ * This view reports; it does not collect decisions. Approving or blocking a
+ * transaction still happens in the live feed, where a row can be expanded to see
+ * the votes and the attribution behind the verdict first.
  */
-export default function BatchResults({ batch, decisions, onDecide, onClose }) {
+export default function BatchResults({ batch, onClose }) {
   const flagged = batch.results.filter((r) => r.ensemble.is_anomaly);
   const clear = batch.results.filter((r) => !r.ensemble.is_anomaly);
-
-  const reviewed = flagged.filter((r) => decisions[decisionKey(r)]).length;
 
   return (
     <div className="batch">
@@ -51,7 +48,6 @@ export default function BatchResults({ batch, decisions, onDecide, onClose }) {
         <Stat value={flagged.length} label="flagged" tone="high" />
         <Stat value={clear.length} label="clear" tone="away" />
         <Stat value={batch.rejected.length} label="rejected" tone="dim" />
-        <Stat value={reviewed} label={`of ${flagged.length} reviewed`} />
       </div>
 
       {batch.cancelled && (
@@ -67,12 +63,7 @@ export default function BatchResults({ batch, decisions, onDecide, onClose }) {
         tone="high"
         empty="No transaction in this file was flagged."
       >
-        <ResultTable
-          results={flagged}
-          decisions={decisions}
-          onDecide={onDecide}
-          decidable
-        />
+        <ResultTable results={flagged} />
         <p className="footnote">
           The other <span className="num">{clear.length.toLocaleString()}</span>{" "}
           transactions in this file were cleared and are not listed. They were
@@ -118,10 +109,10 @@ function Section({ title, count, tone, empty, children }) {
   );
 }
 
-function ResultTable({ results, decisions, onDecide, decidable = false }) {
+function ResultTable({ results }) {
   return (
     <div className="batch-wrap">
-      <div className="batch-table" data-decidable={decidable}>
+      <div className="batch-table">
         <div className="batch-row batch-header">
           <span>Verdict</span>
           <span>Transaction</span>
@@ -131,16 +122,12 @@ function ResultTable({ results, decisions, onDecide, decidable = false }) {
               {d.short}
             </span>
           ))}
-          {decidable && <span>Decision</span>}
         </div>
 
         {results.map((result, index) => (
           <Row
             key={`${result.transaction_id || "tx"}-${result.scored_at}-${index}`}
             result={result}
-            decision={decisions[decisionKey(result)]}
-            onDecide={onDecide}
-            decidable={decidable}
           />
         ))}
       </div>
@@ -148,12 +135,9 @@ function ResultTable({ results, decisions, onDecide, decidable = false }) {
   );
 }
 
-function Row({ result, decision, onDecide, decidable }) {
+function Row({ result }) {
   const { ensemble, detectors } = result;
   const byName = Object.fromEntries(detectors.map((d) => [d.name, d]));
-  const verdict = decision?.verdict ?? null;
-  const override = isOverride(result, verdict);
-  const key = decisionKey(result);
 
   return (
     <div className="batch-row" title={result.explanation.plain_english}>
@@ -183,27 +167,6 @@ function Row({ result, decision, onDecide, decidable }) {
           </span>
         );
       })}
-
-      {decidable && (
-        <span className="batch-decide" data-override={override}>
-          <button
-            type="button"
-            className="decide approve"
-            aria-pressed={verdict === APPROVE}
-            onClick={() => onDecide(key, verdict === APPROVE ? null : APPROVE)}
-          >
-            Approve
-          </button>
-          <button
-            type="button"
-            className="decide block"
-            aria-pressed={verdict === BLOCK}
-            onClick={() => onDecide(key, verdict === BLOCK ? null : BLOCK)}
-          >
-            Deny
-          </button>
-        </span>
-      )}
     </div>
   );
 }

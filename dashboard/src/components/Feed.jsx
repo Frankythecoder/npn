@@ -15,7 +15,19 @@ function rowKey(result, index) {
   return `${result.transaction_id || "tx"}-${result.scored_at}-${index}`;
 }
 
-export default function Feed({ results, expandedKey, onToggle, freshKey, decisions, onDecide }) {
+export default function Feed({
+  results,
+  expandedKey,
+  onToggle,
+  freshKey,
+  decisions,
+  onDecide,
+  // Set while a CSV upload is scoring. The rows arriving are the upload's and
+  // the list is rewritten every poll, so the feed becomes a read-only ticker:
+  // no decision control, and no expanding a row whose position is about to move
+  // out from under the click.
+  scoring = false,
+}) {
   if (!results.length) {
     return (
       <div className="feed">
@@ -27,10 +39,10 @@ export default function Feed({ results, expandedKey, onToggle, freshKey, decisio
   }
 
   return (
-    <div className="feed">
+    <div className="feed" data-scoring={scoring}>
       {results.map((result, index) => {
         const key = rowKey(result, index);
-        const isOpen = key === expandedKey;
+        const isOpen = !scoring && key === expandedKey;
         const amount = Number(result.raw?.TransactionAmount ?? 0);
         const dKey = decisionKey(result);
         const decision = decisions[dKey];
@@ -41,7 +53,8 @@ export default function Feed({ results, expandedKey, onToggle, freshKey, decisio
             <button
               type="button"
               className={`feed-row${key === freshKey ? " is-new" : ""}`}
-              aria-expanded={isOpen}
+              disabled={scoring}
+              aria-expanded={scoring ? undefined : isOpen}
               onClick={() => onToggle(isOpen ? null : key)}
             >
               <Ballot ensemble={result.ensemble} size="sm" />
@@ -50,28 +63,32 @@ export default function Feed({ results, expandedKey, onToggle, freshKey, decisio
               <span className="tally num">
                 {result.ensemble.votes_for}/{result.ensemble.votes_total}
               </span>
-              <span className="review">
-                {decision ? (
-                  <span
-                    className="badge"
-                    data-verdict={decision.verdict}
-                    data-override={override}
-                    title={
-                      override
-                        ? "Analyst overrode the model"
-                        : "Analyst agreed with the model"
-                    }
-                  >
-                    {decision.verdict === APPROVE ? "Approved" : "Blocked"}
-                    {override && <span className="flagdot" aria-hidden="true" />}
-                  </span>
-                ) : (
-                  <span className="badge pending">Review</span>
-                )}
-              </span>
-              <span className="chev" aria-hidden="true">
-                ›
-              </span>
+              {!scoring && (
+                <span className="review">
+                  {decision ? (
+                    <span
+                      className="badge"
+                      data-verdict={decision.verdict}
+                      data-override={override}
+                      title={
+                        override
+                          ? "Analyst overrode the model"
+                          : "Analyst agreed with the model"
+                      }
+                    >
+                      {decision.verdict === APPROVE ? "Approved" : "Blocked"}
+                      {override && <span className="flagdot" aria-hidden="true" />}
+                    </span>
+                  ) : (
+                    <span className="badge pending">Review</span>
+                  )}
+                </span>
+              )}
+              {!scoring && (
+                <span className="chev" aria-hidden="true">
+                  ›
+                </span>
+              )}
             </button>
             {isOpen && (
               <DetailPanel

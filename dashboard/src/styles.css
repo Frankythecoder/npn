@@ -375,6 +375,22 @@ button {
   transition: background 120ms ease;
 }
 
+/* While a CSV upload is scoring the feed is a read-only ticker: neither the
+   review cell nor the expand chevron is rendered, so their columns go too
+   rather than leaving holes on the right. Specificity has to beat the
+   responsive override below, which is why the narrow variant is repeated there
+   rather than relying on source order. */
+.feed[data-scoring="true"] .feed-row {
+  grid-template-columns: 74px minmax(0, 1fr) 108px 52px;
+  cursor: default;
+}
+
+/* The row is a disabled button while scoring — kill the affordance that says
+   otherwise, without fading it out: the numbers still have to be readable. */
+.feed[data-scoring="true"] .feed-row:hover {
+  background: var(--surface);
+}
+
 .feed-row:last-of-type {
   border-bottom: none;
 }
@@ -597,6 +613,9 @@ button {
   }
   .feed-row {
     grid-template-columns: 62px minmax(0, 1fr) 88px 78px 26px;
+  }
+  .feed[data-scoring="true"] .feed-row {
+    grid-template-columns: 62px minmax(0, 1fr) 88px;
   }
   .feed-row .tally {
     display: none;
@@ -973,7 +992,7 @@ button {
 }
 
 .batch-table {
-  min-width: 760px;
+  min-width: 640px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   overflow: hidden;
@@ -981,19 +1000,12 @@ button {
 
 .batch-row {
   display: grid;
+  grid-template-columns: 92px minmax(110px, 1fr) 96px repeat(4, 56px);
   align-items: center;
   gap: 12px;
   padding: 9px 14px;
   background: var(--surface);
   border-bottom: 1px solid var(--line);
-}
-
-.batch-table[data-decidable="true"] .batch-row {
-  grid-template-columns: 92px minmax(110px, 1fr) 96px repeat(4, 56px) 156px;
-}
-
-.batch-table[data-decidable="false"] .batch-row {
-  grid-template-columns: 92px minmax(110px, 1fr) 96px repeat(4, 56px);
 }
 
 .batch-row:last-child {
@@ -1053,33 +1065,6 @@ button {
 .batch-row .score[data-cast="true"] {
   color: var(--toward-high);
   font-weight: 600;
-}
-
-.batch-decide {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 6px;
-}
-
-.batch-decide .decide {
-  padding: 5px 6px;
-  font-size: 11.5px;
-  font-weight: 600;
-}
-
-.batch-decide[data-override="true"] {
-  position: relative;
-}
-
-.batch-decide[data-override="true"]::after {
-  content: "";
-  position: absolute;
-  top: -3px;
-  right: -3px;
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: var(--toward-low);
 }
 
 .rejects {
