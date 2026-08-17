@@ -37,3 +37,12 @@ validation:
 
 storage:
   local_dir: artifacts
+
+gcp:
+  project_id: ""
+  region: us-central1
+  bucket: ""
+  artifact_prefix: artifacts/latest
+  firestore_collection: scored_transactions
+  artifact_repo: anomaly
+  service_name: anomaly-api
