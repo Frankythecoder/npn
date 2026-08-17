@@ -4,6 +4,7 @@ from fastapi.testclient import TestClient
 
 from backend import deps
 from backend.main import create_app
+from backend.presets import reset_injection_counts
 from backend.storage import InMemoryTransactionLog
 from ml.config import Config
 from ml.pipeline.score import Scorer
@@ -34,6 +35,7 @@ def client(artifact_dir):
         Scorer(load_bundle(artifact_dir), Config.load().get("ensemble.threshold")),
         InMemoryTransactionLog(),
     )
+    reset_injection_counts()
     with TestClient(app) as test_client:
         yield test_client
     deps.shutdown()

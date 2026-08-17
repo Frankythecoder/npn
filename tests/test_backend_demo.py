@@ -3,7 +3,7 @@ from fastapi.testclient import TestClient
 
 from backend import deps
 from backend.main import create_app
-from backend.presets import PRESETS
+from backend.presets import PRESETS, reset_injection_counts
 from backend.storage import InMemoryTransactionLog
 from ml.config import Config
 from ml.pipeline.score import Scorer
@@ -23,6 +23,7 @@ def client(artifact_dir):
     app = create_app(load_artifacts=False)
     threshold = Config.load().get("ensemble.threshold")
     deps.override(Scorer(load_bundle(artifact_dir), threshold), InMemoryTransactionLog())
+    reset_injection_counts()
     with TestClient(app) as test_client:
         yield test_client
     deps.shutdown()
@@ -92,3 +93,51 @@ def test_rapid_fire_preset_increments_the_daily_count(client):
     first = client.post("/demo/inject", json={"preset": "rapid_fire"}).json()
     second = client.post("/demo/inject", json={"preset": "rapid_fire"}).json()
     assert second["features"]["DailyAccountVolume"] > first["features"]["DailyAccountVolume"]
+
+
+def test_repeated_normal_injections_stay_clean(client):
+    """The clean preset must survive a rehearsal.
+
+    Every score records itself in the profile store, so before presets owned
+    distinct identities and advanced their dates, firing a few injections drove
+    DailyDeviceVelocity to 4 against a training maximum of 2 and turned the
+    'normal' preset from 0/4 clear into 4/4 flagged. A presenter who practises
+    and then demonstrates would watch the clean case stop being clean.
+    """
+    for attempt in range(5):
+        body = client.post("/demo/inject", json={"preset": "normal"}).json()
+        assert body["ensemble"]["is_anomaly"] is False, (
+            f"injection {attempt + 1} flagged a routine transaction: "
+            f"{body['ensemble']['votes_for']}/{body['ensemble']['votes_total']}, "
+            f"device velocity {body['features']['DailyDeviceVelocity']}"
+        )
+        assert body["features"]["DailyDeviceVelocity"] == 1
+        assert body["features"]["DailyAccountVolume"] == 1
+
+
+def test_one_preset_does_not_contaminate_another(client):
+    """Firing the anomalous presets must not push the clean one over the line."""
+    for name in ("account_drain", "credential_stuffing", "rapid_fire"):
+        client.post("/demo/inject", json={"preset": name})
+
+    body = client.post("/demo/inject", json={"preset": "normal"}).json()
+    assert body["ensemble"]["is_anomaly"] is False
+    assert body["features"]["DailyDeviceVelocity"] == 1
+
+
+def test_rapid_fire_still_accumulates_on_purpose(client):
+    """Rapid-fire opts out of date advancement — climbing counts are its point."""
+    first = client.post("/demo/inject", json={"preset": "rapid_fire"}).json()
+    second = client.post("/demo/inject", json={"preset": "rapid_fire"}).json()
+    assert second["features"]["DailyAccountVolume"] > first["features"]["DailyAccountVolume"]
+
+
+def test_presets_advertise_whether_they_accumulate(client):
+    body = client.get("/demo/presets").json()
+    flags = {p["name"]: p["accumulates"] for p in body["presets"]}
+    assert flags == {
+        "normal": False,
+        "account_drain": False,
+        "credential_stuffing": False,
+        "rapid_fire": True,
+    }

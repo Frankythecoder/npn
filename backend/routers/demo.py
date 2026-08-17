@@ -11,7 +11,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from backend import deps
-from backend.presets import PRESETS
+from backend.presets import PRESETS, materialise
 from backend.schemas import TransactionIn
 
 router = APIRouter(prefix="/demo", tags=["demo"])
@@ -33,6 +33,7 @@ def presets() -> dict:
                 "label": preset["label"],
                 "description": preset["description"],
                 "fields": preset["fields"],
+                "accumulates": preset["accumulates"],
             }
             for name, preset in PRESETS.items()
         ]
@@ -48,7 +49,9 @@ def inject(payload: InjectIn) -> dict:
             detail=f"unknown preset {payload.preset!r}; choose one of {list(PRESETS)}",
         )
 
-    fields = {**preset["fields"], **payload.overrides}
+    # materialise() dates the transaction so repeats behave as the scenario
+    # intends, rather than accumulating same-day counts across a session.
+    fields = {**materialise(payload.preset), **payload.overrides}
     fields.setdefault("TransactionID", f"DEMO-{uuid.uuid4().hex[:8].upper()}")
 
     try:
