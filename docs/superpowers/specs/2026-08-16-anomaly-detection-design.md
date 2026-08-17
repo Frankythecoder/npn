@@ -542,9 +542,12 @@ detectors/{name}.pkl    8 files, each carrying threshold_ and train_scores_.
 surrogate_xgb.json
 ```
 
-A `latest` pointer file selects the active version. Version directories are
-immutable: a cold start reading from a mutable path during an upload would get a
-torn bundle.
+Artifacts are written to a single reusable directory rather than immutable
+versioned ones with a `latest` pointer, which an earlier draft specified. `train.py`
+writes flat, and `save_bundle` clears stale detector pickles before writing so a
+changed roster cannot leave orphans that `load_bundle`'s glob picks back up. The
+torn-bundle risk versioning was meant to address is real but does not arise in the
+demonstration flow, where the upload completes before the service is deployed.
 
 **Library versions are pinned exactly** in `requirements.txt`, and the container
 installs from it. The detectors are joblib pickles, and a scikit-learn minor-version
@@ -575,14 +578,26 @@ CORS is configured for the dashboard origin. The service is deployed
 
 **Firestore** holds one collection, `scored_transactions`, one document per result,
 matching the result contract. Ordering on a single field is auto-indexed, so no
-composite index is required. `train.py` seeds approximately 200 scored historical
-transactions so the dashboard table is populated on first load.
+composite index is required. `backend/seed.py` seeds approximately 200 scored
+historical transactions so the dashboard table is populated on first load.
+
+**Seeding deliberately does not live in `train.py`.** Putting it there would make
+offline training import Firestore, breaking the training tests on any machine
+without the `google-cloud` libraries and coupling training to a service it
+otherwise has no need of. The seed script scores through the same
+`score_transaction()` path, so the outcome is identical. It must also swap in a
+fresh `ProfileStore` for the replay: scoring historical rows against the bundle's
+already-populated store flags every one of them, because each row then sees its
+own account's later activity as history.
 
 ## 11. Deployment
 
 Cloud Run, container built by Cloud Build and pushed to Artifact Registry.
-`config.yaml` carries `gcp.project_id`, `gcp.region` and `gcp.bucket`; these are set
-once as the first step of the README and are required before any deploy command runs.
+The deployed service is configured entirely by `ANOMALY_*` environment variables set
+on the Cloud Run service (see `backend/config.py`), and the README's first step sets
+the corresponding shell variables. `config.yaml` carries no GCP keys: an earlier
+draft specified them, but nothing read them, and duplicating deployment facts across
+a YAML file, the container environment and the build config invites drift.
 
 **Cold start is the principal operational risk.** Container pull, importing
 scikit-learn, XGBoost and SHAP, downloading and unpickling the bundle, and
@@ -597,7 +612,8 @@ activity. Pinning to one instance keeps the profile store coherent. This is a
 deliberate constraint of the demonstration deployment and is documented as such in
 the README rather than left implicit.
 
-**Cost.** With one warm instance at 1 vCPU and 1 GiB, the dominant line is idle
+**Cost.** With one warm instance at 1 vCPU and 2 GiB (raised from 1 GiB: scikit-learn,
+XGBoost and SHAP together need the headroom), the dominant line is idle
 instance time at roughly $1.50–2.00 per week, plus a few cents for Firestore reads
 under dashboard polling, Cloud Storage, and Artifact Registry image storage. Total
 demo-level usage is on the order of $2–3 per week with `--min-instances=1`, and under
