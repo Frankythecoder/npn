@@ -75,6 +75,19 @@ def test_inject_generates_a_transaction_id_when_absent(client):
     assert body["transaction_id"]
 
 
+def test_an_unrelated_construction_error_is_not_swallowed_as_a_422(client, monkeypatch):
+    """A bug unrelated to input validation (e.g. a TypeError in TransactionIn
+    construction) must surface as a server error, not be misreported as a
+    client-side 422 -- that is what a bare `except Exception` would do."""
+
+    def boom(**kwargs):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr("backend.routers.demo.TransactionIn", boom)
+    with pytest.raises(RuntimeError, match="boom"):
+        client.post("/demo/inject", json={"preset": "normal"})
+
+
 def test_rapid_fire_preset_increments_the_daily_count(client):
     first = client.post("/demo/inject", json={"preset": "rapid_fire"}).json()
     second = client.post("/demo/inject", json={"preset": "rapid_fire"}).json()

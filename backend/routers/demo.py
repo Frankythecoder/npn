@@ -8,7 +8,7 @@ from __future__ import annotations
 import uuid
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from backend import deps
 from backend.presets import PRESETS
@@ -53,7 +53,7 @@ def inject(payload: InjectIn) -> dict:
 
     try:
         transaction = TransactionIn(**fields)
-    except Exception as exc:
+    except ValidationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     try:
