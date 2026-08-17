@@ -5,6 +5,7 @@ import pytest
 from ml.explain.shap_explainer import (
     FEATURE_PHRASES,
     HIGH_PERCENTILE,
+    LOW_PERCENTILE,
     ONE_HOT_PHRASES,
     ShapExplainer,
     _ordinal,
@@ -457,3 +458,173 @@ def test_percentile_of_a_continuous_feature_is_unaffected_by_the_mid_rank_switch
     value = 0.9603  # deliberately not an exact reference element
     old_convention = 100.0 * np.searchsorted(reference, value, side="right") / len(reference)
     assert explainer._percentile_of("UtilizationRatio", value) == pytest.approx(old_convention)
+
+
+# --- Sentence selection: the qualifying predicate as a rule, not three anecdotes ---
+#
+# The three defects fixed in the previous batch (an unremarkable feature
+# headlining, a negated one-hot qualifying, a tied minimum reading as
+# extreme) were each pinned by a test built around the specific row that
+# exposed it. None of those tests exercises: two-or-more qualifying features
+# (so `qualifying[:2]`'s ordering is untested), the LOW_PERCENTILE branch of
+# the qualifying predicate (every prior "extreme feature" test used the high
+# band), the >=/<= boundary at HIGH_PERCENTILE/LOW_PERCENTILE themselves, or
+# _percentile_of's mid-rank formula away from the single 95/5 tie ratio
+# already covered. The tests below cover the predicate as a rule so a fourth
+# member of this family fails a test instead of requiring someone to notice
+# a bad sentence.
+
+
+def test_two_qualifying_features_both_appear_in_shap_order():
+    """Rank 1 (UtilizationRatio) and rank 3 (CustomerAge) both qualify; rank 2
+    (TransactionDuration) sits mid-band and does not. qualifying[:2] must
+    keep both, in SHAP rank order, skipping over the non-qualifying rank 2 --
+    behaviour no existing test exercises, since every prior case has zero or
+    one qualifying feature."""
+    explainer = _make_rigged_explainer(
+        ["UtilizationRatio", "TransactionDuration", "CustomerAge"],
+        contributions=[0.5, 0.3, 0.1],
+    )
+    row = pd.DataFrame(
+        {
+            "UtilizationRatio": [99.0],  # rank 1, ~99.5th percentile: extreme high
+            "TransactionDuration": [49.0],  # rank 2, ~49.5th percentile: mid-band
+            "CustomerAge": [0.5],  # rank 3, ~1st percentile: extreme low
+        }
+    )
+    text = explainer.explain(row, is_anomaly=True)["plain_english"]
+    assert "transaction duration" not in text
+    utilization_pos = text.index("share of the account balance drained")
+    age_pos = text.index("customer age")
+    assert utilization_pos < age_pos, "qualifying features must stay in SHAP order"
+
+
+def test_three_qualifying_features_still_headline_only_the_first_two():
+    """All three top features qualify; qualifying[:2] must still truncate to
+    two, exactly as it does for the raw-SHAP fallback path."""
+    explainer = _make_rigged_explainer(
+        ["UtilizationRatio", "CustomerAge", "TransactionDuration"],
+        contributions=[0.5, 0.3, 0.1],
+    )
+    row = pd.DataFrame(
+        {
+            "UtilizationRatio": [99.0],  # rank 1: extreme high
+            "CustomerAge": [0.5],  # rank 2: extreme low
+            "TransactionDuration": [98.0],  # rank 3: extreme high too
+        }
+    )
+    text = explainer.explain(row, is_anomaly=True)["plain_english"]
+    assert "share of the account balance drained" in text
+    assert "customer age" in text
+    assert "transaction duration" not in text
+
+
+def test_low_percentile_feature_qualifies_and_renders_with_low_phrasing():
+    """Every prior 'extreme feature headlines' test used the high band. This
+    pins the LOW_PERCENTILE half of the same qualifying predicate."""
+    explainer = _make_rigged_explainer(
+        ["CustomerAge", "TransactionDuration"],
+        contributions=[0.5, 0.1],
+    )
+    row = pd.DataFrame(
+        {
+            "CustomerAge": [0.5],  # ~1st percentile: extreme low
+            "TransactionDuration": [49.0],  # mid-band
+        }
+    )
+    text = explainer.explain(row, is_anomaly=True)["plain_english"]
+    assert "an unusually low customer age" in text
+    assert "transaction duration" not in text
+
+
+@pytest.mark.parametrize(
+    "percentile, expect_high, expect_low",
+    [
+        (HIGH_PERCENTILE, True, False),  # exactly 90.0: inclusive high boundary
+        (HIGH_PERCENTILE - 0.0001, False, False),  # just below: mid-band
+        (HIGH_PERCENTILE + 0.0001, True, False),  # just above: still high
+        (LOW_PERCENTILE, False, True),  # exactly 10.0: inclusive low boundary
+        (LOW_PERCENTILE + 0.0001, False, False),  # just above: mid-band
+        (LOW_PERCENTILE - 0.0001, False, True),  # just below: still low
+    ],
+)
+def test_phrase_for_boundary_operators_are_inclusive_at_the_threshold(
+    percentile, expect_high, expect_low
+):
+    """_phrase_for takes percentile as a direct argument, so the >=/<=
+    comparisons against HIGH_PERCENTILE/LOW_PERCENTILE can be pinned exactly
+    at, just inside, and just outside each threshold without going through
+    percentile computation at all."""
+    explainer = _make_rigged_explainer(["CustomerAge"], contributions=[1.0])
+    phrase = explainer._phrase_for("CustomerAge", value=40.0, percentile=percentile)
+    assert ("unusually high" in phrase) is expect_high
+    assert ("unusually low" in phrase) is expect_low
+
+
+@pytest.mark.parametrize(
+    "value, expected_percentile, qualifies",
+    [
+        (899.5, 90.0, True),  # exactly HIGH_PERCENTILE: inclusive
+        (898.5, 89.9, False),  # just below HIGH_PERCENTILE: excluded
+        (900.5, 90.1, True),  # just above HIGH_PERCENTILE: included
+        (99.5, 10.0, True),  # exactly LOW_PERCENTILE: inclusive
+        (100.5, 10.1, False),  # just above LOW_PERCENTILE: excluded
+        (98.5, 9.9, True),  # just below LOW_PERCENTILE: included
+    ],
+)
+def test_qualifying_predicate_boundary_is_pinned_through_real_percentiles(
+    value, expected_percentile, qualifies
+):
+    """The qualifying list comprehension in explain() re-applies the same
+    >=HIGH_PERCENTILE / <=LOW_PERCENTILE comparisons to a percentile that
+    _percentile_of actually computed, not one handed in directly as in the
+    _phrase_for table above. A 1000-point reference gives 0.1-percentile
+    resolution, so the boundary and its immediate neighbours land on exact
+    values rather than being approximated."""
+    explainer = _make_rigged_explainer(
+        ["UtilizationRatio", "TransactionDuration"],
+        contributions=[0.5, 0.1],
+    )
+    explainer._percentiles["UtilizationRatio"] = np.arange(1000, dtype=float)
+
+    percentile = explainer._percentile_of("UtilizationRatio", value)
+    assert percentile == pytest.approx(expected_percentile)
+
+    row = pd.DataFrame({"UtilizationRatio": [value], "TransactionDuration": [49.0]})
+    text = explainer.explain(row, is_anomaly=True)["plain_english"]
+    headlines_as_extreme = "share of the account balance drained" in text and (
+        "unusually high" in text or "unusually low" in text
+    )
+    assert headlines_as_extreme is qualifies
+    if not qualifies:
+        # TransactionDuration is mid-band too, so qualifying is empty and both
+        # features fall back into the sentence via the raw-SHAP-order path.
+        assert "the share of the account balance drained" in text
+
+
+@pytest.mark.parametrize(
+    "reference, value, expected_percentile",
+    [
+        # Below the entire reference range.
+        ([10.0, 20.0, 30.0], 5.0, 0.0),
+        # Above the entire reference range.
+        ([10.0, 20.0, 30.0], 100.0, 100.0),
+        # Tied at the very bottom: three copies of the minimum out of five
+        # values. Mid-rank averages left=0 and right=3 -> 30.0, not 0.0.
+        ([1.0, 1.0, 1.0, 5.0, 10.0], 1.0, 30.0),
+        # Tied at the very top: three copies of the maximum out of five
+        # values. Mid-rank averages left=2 and right=5 -> 70.0, not 100.0.
+        ([1.0, 5.0, 10.0, 10.0, 10.0], 10.0, 70.0),
+    ],
+)
+def test_percentile_of_mid_rank_across_tie_positions_and_out_of_range_values(
+    reference, value, expected_percentile
+):
+    """The existing mid-rank tests use a single 95/5 tie ratio. This covers
+    the other shapes _percentile_of must handle: ties anchored at the
+    bottom of the reference, ties anchored at the top, and values that fall
+    entirely outside the observed range in either direction."""
+    explainer = _make_rigged_explainer(["UtilizationRatio"], contributions=[1.0])
+    explainer._percentiles["UtilizationRatio"] = np.array(reference)
+    percentile = explainer._percentile_of("UtilizationRatio", value)
+    assert percentile == pytest.approx(expected_percentile)
