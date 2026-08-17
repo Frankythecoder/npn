@@ -1,0 +1,39 @@
+substitutions:
+  _REGION: us-central1
+  _REPO: anomaly
+  _SERVICE: anomaly-api
+  _BUCKET: ""
+
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -f
+      - backend/Dockerfile
+      - -t
+      - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE}:${SHORT_SHA}
+      - .
+
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - push
+      - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE}:${SHORT_SHA}
+
+  - name: gcr.io/google.com/cloudsdktool/cloud-sdk
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - ${_SERVICE}
+      - --image=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE}:${SHORT_SHA}
+      - --region=${_REGION}
+      - --platform=managed
+      - --allow-unauthenticated
+      - --memory=2Gi
+      - --cpu=1
+      - --min-instances=1
+      - --max-instances=1
+      - --set-env-vars=ANOMALY_ARTIFACT_SOURCE=gcs,ANOMALY_GCS_BUCKET=${_BUCKET},ANOMALY_TRANSACTION_LOG=firestore
+
+options:
+  logging: CLOUD_LOGGING_ONLY
