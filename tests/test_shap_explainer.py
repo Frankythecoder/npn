@@ -4,6 +4,7 @@ import pytest
 
 from ml.explain.shap_explainer import (
     FEATURE_PHRASES,
+    HIGH_PERCENTILE,
     ONE_HOT_PHRASES,
     ShapExplainer,
     _ordinal,
@@ -409,3 +410,50 @@ def test_top_features_still_reports_the_unset_one_hot_with_its_shap_value():
     assert names == ["Channel_Online", "UtilizationRatio", "CustomerAge"]
     assert result["top_features"][0]["value"] == 0.0
     assert result["top_features"][0]["shap_value"] == pytest.approx(0.5)
+
+
+# --- Percentile convention: mid-rank, not right-only searchsorted ---
+#
+# side="right" counts every value <= the target, so on a heavily tied
+# column the minimum (which is also the mode, for e.g. LoginAttempts in the
+# real training data: 2390/2512 rows equal 1) scores near the top just
+# because every tied copy counts as "<=". Mid-rank (averaging the left and
+# right insertion points) fixes this for tied values while leaving
+# genuinely continuous features -- where a value has no exact tie in the
+# reference distribution, so left and right insertion points already
+# coincide -- completely unchanged.
+
+
+def test_minimum_of_a_heavily_tied_column_reports_a_mid_range_percentile():
+    """LoginAttempts=1 is both the minimum and the overwhelming majority
+    value. The old right-only convention scored it near the top (95.1% on
+    the real data) simply because every tied '1' counts as '<= 1'. Mid-rank
+    must place it near the middle instead, well below HIGH_PERCENTILE."""
+    explainer = _make_rigged_explainer(["LoginAttempts"], contributions=[1.0])
+    explainer._percentiles["LoginAttempts"] = np.array([1.0] * 95 + [5.0] * 5)
+    percentile = explainer._percentile_of("LoginAttempts", 1.0)
+    assert percentile < HIGH_PERCENTILE
+    assert 40.0 <= percentile <= 60.0
+
+
+def test_a_genuinely_extreme_value_of_the_same_tied_column_still_reports_near_the_top():
+    """LoginAttempts=5 is the rare, genuinely extreme value in the same
+    distribution. Mid-rank must not flatten it toward the middle along
+    with the tied minimum -- it should still read as clearly extreme."""
+    explainer = _make_rigged_explainer(["LoginAttempts"], contributions=[1.0])
+    explainer._percentiles["LoginAttempts"] = np.array([1.0] * 95 + [5.0] * 5)
+    percentile = explainer._percentile_of("LoginAttempts", 5.0)
+    assert percentile >= HIGH_PERCENTILE
+
+
+def test_percentile_of_a_continuous_feature_is_unaffected_by_the_mid_rank_switch():
+    """For a value with no exact tie in the reference distribution, the
+    left and right insertion points already coincide, so mid-rank gives
+    the identical result the old right-only convention gave -- only tied
+    values are affected by the convention switch."""
+    explainer = _make_rigged_explainer(["UtilizationRatio"], contributions=[1.0])
+    reference = np.linspace(0.0, 2.0, 2000)  # unique values: no ties
+    explainer._percentiles["UtilizationRatio"] = reference
+    value = 0.9603  # deliberately not an exact reference element
+    old_convention = 100.0 * np.searchsorted(reference, value, side="right") / len(reference)
+    assert explainer._percentile_of("UtilizationRatio", value) == pytest.approx(old_convention)

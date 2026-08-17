@@ -103,8 +103,15 @@ class ShapExplainer:
         reference = self._percentiles.get(column)
         if reference is None or len(reference) == 0:
             return 50.0
-        position = float(np.searchsorted(reference, value, side="right"))
-        return 100.0 * position / len(reference)
+        # Mid-rank: average the left and right insertion points. side="right"
+        # alone counts every tied value as "<= target", so on a heavily
+        # tied column the minimum (often also the mode) scores near the
+        # top purely as an artifact of the ties. For a value with no exact
+        # tie, left and right already coincide, so this leaves continuous
+        # features unchanged.
+        left = float(np.searchsorted(reference, value, side="left"))
+        right = float(np.searchsorted(reference, value, side="right"))
+        return 100.0 * (left + right) / 2 / len(reference)
 
     def _phrase_for(self, column: str, value: float, percentile: float) -> str:
         if column in ONE_HOT_PHRASES:
