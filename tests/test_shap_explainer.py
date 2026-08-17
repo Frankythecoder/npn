@@ -198,15 +198,23 @@ def test_one_hot_set_value_renders_as_a_noun_phrase(one_hot_driven):
 
 def test_one_hot_unset_value_renders_the_negated_phrase(one_hot_driven):
     """A row where Channel_Online is 0.0 must never be described as an
-    online transaction -- that would state a false fact about the row."""
+    online transaction -- that would state a false fact about the row.
+
+    A negated one-hot no longer qualifies as a sentence headline (it is
+    usually the most ordinary possible value -- see the qualifying-features
+    tests below), so the sentence may cite a different qualifying feature
+    instead. What must never happen, in top_features or the sentence, is
+    the row being described as online when it was not.
+    """
     explainer, X, y = one_hot_driven
     idx = int(np.argmin(y))  # a row where Channel_Online is genuinely 0.0
     assert X.iloc[idx]["Channel_Online"] == 0.0
     result = explainer.explain(X.iloc[[idx]], is_anomaly=False)
-    names = [f["feature"] for f in result["top_features"]]
-    assert "Channel_Online" in names
+    top_features = {f["feature"]: f for f in result["top_features"]}
+    assert "Channel_Online" in top_features
+    assert top_features["Channel_Online"]["value"] == 0.0
     text = result["plain_english"]
-    assert "not an online transaction" in text
+    assert "an online transaction" not in text
 
 
 # --- Sentence selection: qualifying (extreme) features, not raw SHAP rank ---
@@ -237,14 +245,29 @@ class _FakeSurrogateModel:
 
 
 def _make_rigged_explainer(feature_columns, contributions):
-    """A ShapExplainer with hand-picked SHAP contributions and a 0..99
-    reference distribution (so percentile N corresponds to value N - 1) for
-    every column, built without training or calling shap.TreeExplainer."""
+    """A ShapExplainer with hand-picked SHAP contributions, built without
+    training or calling shap.TreeExplainer.
+
+    Numeric columns get a 0..99 reference distribution (so percentile N
+    corresponds to value N - 1). One-hot columns get a realistic 70/30
+    zeros/ones reference instead -- a plain 0..99 array would searchsorted
+    a *set* one-hot's value of 1.0 to 100th percentile and (worse) an
+    *unset* one-hot's value of 0.0 to 1st percentile purely as an artifact
+    of the array only having one element at each of 0.0 and 1.0, which
+    would let the LOW_PERCENTILE numeric clause qualify an unset one-hot
+    for reasons that have nothing to do with the one-hot-specific rule
+    under test.
+    """
     explainer = object.__new__(ShapExplainer)
     explainer.model = _FakeSurrogateModel()
     explainer.feature_columns = list(feature_columns)
     explainer._percentiles = {
-        col: np.arange(100, dtype=float) for col in feature_columns
+        col: (
+            np.array([0.0] * 70 + [1.0] * 30)
+            if col in ONE_HOT_PHRASES
+            else np.arange(100, dtype=float)
+        )
+        for col in feature_columns
     }
     explainer._explainer = _FakeTreeExplainer(contributions)
     return explainer
@@ -310,3 +333,79 @@ def test_top_features_ranking_is_unaffected_by_sentence_selection():
     result = explainer.explain(row, is_anomaly=True)
     names = [f["feature"] for f in result["top_features"]]
     assert names == ["TransactionDuration", "UtilizationRatio", "CustomerAge"]
+
+
+# --- Sentence selection: a negated one-hot must never qualify ---
+#
+# The unconditional "one-hot phrases always qualify" clause let *negated*
+# one-hots (e.g. "not a credit transaction" -- true for 77.4% of the
+# training data, since TransactionType is binary) straight into the
+# sentence. Every one-hot at value 1.0 happens to searchsorted to
+# percentile 100.0 regardless of how common the level is, and at value 0.0
+# to 100 * (1 - prevalence) -- so percentile alone can't gate this; the
+# clause must check the feature's own value instead.
+
+
+def test_sentence_skips_an_unset_one_hot_in_favour_of_an_extreme_feature():
+    """Top-SHAP feature is an *unset* one-hot (a negated fact, not a
+    magnitude claim of any kind); the #2-ranked feature is genuinely
+    extreme. The sentence must cite the extreme feature, not the negation."""
+    explainer = _make_rigged_explainer(
+        ["Channel_Online", "UtilizationRatio", "CustomerAge"],
+        contributions=[0.5, 0.3, 0.05],
+    )
+    row = pd.DataFrame(
+        {
+            "Channel_Online": [0.0],  # unset: "not an online transaction"
+            "UtilizationRatio": [99.0],  # 100th percentile: extreme
+            "CustomerAge": [37.5],  # mid-band, rank 3
+        }
+    )
+    text = explainer.explain(row, is_anomaly=True)["plain_english"]
+    assert "share of the account balance drained (100th percentile)" in text
+    assert "online" not in text
+    assert text.startswith("Flagged primarily due to")
+    assert text.endswith(".")
+
+
+def test_sentence_still_includes_a_set_one_hot():
+    """Guard against over-correcting into excluding every categorical: a
+    *set* one-hot (a true, positive fact about the row) must still
+    qualify."""
+    explainer = _make_rigged_explainer(
+        ["Channel_Online", "CustomerAge", "TransactionDuration"],
+        contributions=[0.5, 0.3, 0.05],
+    )
+    row = pd.DataFrame(
+        {
+            "Channel_Online": [1.0],  # set: "an online transaction"
+            "CustomerAge": [49.0],  # mid-band
+            "TransactionDuration": [49.0],  # mid-band
+        }
+    )
+    text = explainer.explain(row, is_anomaly=True)["plain_english"]
+    assert "an online transaction" in text
+    assert "not an online transaction" not in text
+    assert text.startswith("Flagged primarily due to an online transaction")
+
+
+def test_top_features_still_reports_the_unset_one_hot_with_its_shap_value():
+    """The filter excludes the negated one-hot from the sentence only --
+    top_features (the dashboard's attribution list) must still carry it,
+    with its real SHAP value, unchanged."""
+    explainer = _make_rigged_explainer(
+        ["Channel_Online", "UtilizationRatio", "CustomerAge"],
+        contributions=[0.5, 0.3, 0.05],
+    )
+    row = pd.DataFrame(
+        {
+            "Channel_Online": [0.0],
+            "UtilizationRatio": [99.0],
+            "CustomerAge": [37.5],
+        }
+    )
+    result = explainer.explain(row, is_anomaly=True)
+    names = [f["feature"] for f in result["top_features"]]
+    assert names == ["Channel_Online", "UtilizationRatio", "CustomerAge"]
+    assert result["top_features"][0]["value"] == 0.0
+    assert result["top_features"][0]["shap_value"] == pytest.approx(0.5)

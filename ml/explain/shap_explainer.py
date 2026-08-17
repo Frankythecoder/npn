@@ -155,16 +155,22 @@ class ShapExplainer:
 
         # The sentence should headline features that are actually remarkable,
         # not whichever ranked highest by raw SHAP magnitude -- a mid-band
-        # value in the #2 slot reads as a false claim of severity. One-hot
-        # phrases are statements of fact rather than magnitude claims, so
-        # they always qualify. Order among qualifying phrases is preserved
-        # from SHAP rank; if none qualify, fall back to the raw top two so
-        # the sentence still says something. top_features itself is
-        # untouched -- the dashboard's bar chart needs the true attribution.
+        # value in the #2 slot reads as a false claim of severity. A *set*
+        # one-hot is a positive statement of fact, so it always qualifies;
+        # a *negated* one-hot ("not a credit transaction") is often the most
+        # ordinary possible value (77.4% of the training data) and must not
+        # qualify just because it's a one-hot -- percentile alone can't gate
+        # this either, since searchsorted maps every one-hot at 1.0 to the
+        # 100th percentile and 0.0 to 100 * (1 - prevalence) regardless of
+        # how common the level actually is. Order among qualifying phrases
+        # is preserved from SHAP rank; if none qualify, fall back to the raw
+        # top two so the sentence still says something. top_features itself
+        # is untouched -- the dashboard's bar chart needs the true
+        # attribution, including for features the sentence excludes.
         qualifying = [
             phrase
             for feature, phrase in zip(top_features, phrases)
-            if feature["feature"] in ONE_HOT_PHRASES
+            if (feature["feature"] in ONE_HOT_PHRASES and feature["value"] >= 0.5)
             or feature["percentile"] >= HIGH_PERCENTILE
             or feature["percentile"] <= LOW_PERCENTILE
         ]
