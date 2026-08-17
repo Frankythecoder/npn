@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from collections import deque
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Protocol
 
 from backend.config import Settings
 
