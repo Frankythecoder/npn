@@ -153,12 +153,29 @@ class ShapExplainer:
             )
             phrases.append(self._phrase_for(column, value, percentile))
 
+        # The sentence should headline features that are actually remarkable,
+        # not whichever ranked highest by raw SHAP magnitude -- a mid-band
+        # value in the #2 slot reads as a false claim of severity. One-hot
+        # phrases are statements of fact rather than magnitude claims, so
+        # they always qualify. Order among qualifying phrases is preserved
+        # from SHAP rank; if none qualify, fall back to the raw top two so
+        # the sentence still says something. top_features itself is
+        # untouched -- the dashboard's bar chart needs the true attribution.
+        qualifying = [
+            phrase
+            for feature, phrase in zip(top_features, phrases)
+            if feature["feature"] in ONE_HOT_PHRASES
+            or feature["percentile"] >= HIGH_PERCENTILE
+            or feature["percentile"] <= LOW_PERCENTILE
+        ]
+        headline_phrases = qualifying[:2] if qualifying else phrases[:2]
+
         if is_anomaly:
-            sentence = f"Flagged primarily due to {_join(phrases[:2])}."
+            sentence = f"Flagged primarily due to {_join(headline_phrases)}."
         else:
             sentence = (
                 "No strong anomaly indicators. The closest contributors were "
-                f"{_join(phrases[:2])}."
+                f"{_join(headline_phrases)}."
             )
 
         return {

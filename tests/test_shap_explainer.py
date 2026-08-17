@@ -207,3 +207,106 @@ def test_one_hot_unset_value_renders_the_negated_phrase(one_hot_driven):
     assert "Channel_Online" in names
     text = result["plain_english"]
     assert "not an online transaction" in text
+
+
+# --- Sentence selection: qualifying (extreme) features, not raw SHAP rank ---
+#
+# explain() must build top_features from raw SHAP magnitude (the dashboard's
+# bar chart needs true attribution) but build the *sentence* only from
+# phrases that are actually remarkable: a one-hot fact, or a percentile that
+# clears HIGH_PERCENTILE/LOW_PERCENTILE. These fixtures bypass __init__'s
+# shap.TreeExplainer(model) construction and real training entirely, so the
+# SHAP contributions and percentiles are exact and hand-picked rather than
+# whatever a trained model happens to produce -- the selection logic is pure
+# and does not need a real model to exercise it.
+
+
+class _FakeTreeExplainer:
+    """Stands in for shap.TreeExplainer: returns fixed contributions."""
+
+    def __init__(self, contributions):
+        self._contributions = np.asarray(contributions, dtype=float)
+
+    def shap_values(self, frame):
+        return self._contributions.reshape(1, -1)
+
+
+class _FakeSurrogateModel:
+    def predict_proba(self, frame):
+        return np.array([[0.1, 0.9]])
+
+
+def _make_rigged_explainer(feature_columns, contributions):
+    """A ShapExplainer with hand-picked SHAP contributions and a 0..99
+    reference distribution (so percentile N corresponds to value N - 1) for
+    every column, built without training or calling shap.TreeExplainer."""
+    explainer = object.__new__(ShapExplainer)
+    explainer.model = _FakeSurrogateModel()
+    explainer.feature_columns = list(feature_columns)
+    explainer._percentiles = {
+        col: np.arange(100, dtype=float) for col in feature_columns
+    }
+    explainer._explainer = _FakeTreeExplainer(contributions)
+    return explainer
+
+
+def test_sentence_cites_the_extreme_feature_not_the_mid_band_top_shap_feature():
+    """Top-SHAP feature (TransactionDuration) sits at the 38th percentile --
+    unremarkable. The #2-ranked feature (UtilizationRatio) sits at the 100th
+    -- genuinely extreme. The sentence must headline the extreme one."""
+    explainer = _make_rigged_explainer(
+        ["TransactionDuration", "UtilizationRatio", "CustomerAge"],
+        contributions=[0.5, 0.3, 0.05],
+    )
+    row = pd.DataFrame(
+        {
+            "TransactionDuration": [37.5],  # 38th percentile: mid-band
+            "UtilizationRatio": [99.0],  # 100th percentile: extreme
+            "CustomerAge": [37.5],  # 38th percentile: mid-band, rank 3
+        }
+    )
+    text = explainer.explain(row, is_anomaly=True)["plain_english"]
+    assert "share of the account balance drained (100th percentile)" in text
+    assert "transaction duration" not in text
+    assert text.startswith("Flagged primarily due to")
+    assert text.endswith(".")
+
+
+def test_sentence_falls_back_to_raw_shap_order_when_nothing_is_extreme():
+    """No feature clears the high/low bands: the sentence must still say
+    something, using the previous top-two-by-SHAP behaviour."""
+    explainer = _make_rigged_explainer(
+        ["TransactionDuration", "UtilizationRatio", "CustomerAge"],
+        contributions=[0.5, 0.3, 0.05],
+    )
+    row = pd.DataFrame(
+        {
+            "TransactionDuration": [49.0],  # 50th percentile
+            "UtilizationRatio": [49.0],  # 50th percentile
+            "CustomerAge": [49.0],  # 50th percentile
+        }
+    )
+    text = explainer.explain(row, is_anomaly=True)["plain_english"]
+    assert "the transaction duration (50th percentile)" in text
+    assert "the share of the account balance drained (50th percentile)" in text
+    assert text.startswith("Flagged primarily due to")
+    assert text.endswith(".")
+
+
+def test_top_features_ranking_is_unaffected_by_sentence_selection():
+    """top_features must stay fully SHAP-ranked regardless of which phrases
+    the sentence picks -- the dashboard's bar chart needs true attribution."""
+    explainer = _make_rigged_explainer(
+        ["TransactionDuration", "UtilizationRatio", "CustomerAge"],
+        contributions=[0.5, 0.3, 0.05],
+    )
+    row = pd.DataFrame(
+        {
+            "TransactionDuration": [37.5],
+            "UtilizationRatio": [99.0],
+            "CustomerAge": [37.5],
+        }
+    )
+    result = explainer.explain(row, is_anomaly=True)
+    names = [f["feature"] for f in result["top_features"]]
+    assert names == ["TransactionDuration", "UtilizationRatio", "CustomerAge"]
