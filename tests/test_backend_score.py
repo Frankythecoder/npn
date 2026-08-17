@@ -2,7 +2,6 @@ import pytest
 from fastapi.testclient import TestClient
 
 from backend import deps
-from backend.config import Settings
 from backend.main import create_app
 from backend.storage import InMemoryTransactionLog
 from ml.config import Config

@@ -40,3 +40,48 @@ def test_seed_produces_a_mix_of_verdicts(scorer):
     seed_log(scorer, log, raw, limit=200)
     verdicts = {r["ensemble"]["is_anomaly"] for r in log.recent(limit=200)}
     assert verdicts == {True, False}
+
+
+def test_no_seeded_sentence_negates_a_one_hot(scorer):
+    """The check that would have caught every explainer defect so far.
+
+    All four defects in the explanation layer were found by reading rendered
+    sentences, never by a failing test: unremarkable features headlining,
+    negated one-hots qualifying, tied minimums reading as extreme, and the
+    fallback re-admitting what the filter excluded. Each passed every test at
+    the time. This asserts a property over real output instead of a rigged
+    fixture -- it would have failed on all four.
+    """
+    import re
+
+    log = InMemoryTransactionLog(maxlen=500)
+    raw = load_raw(Config.load().get("data.csv_path"))
+    seed_log(scorer, log, raw, limit=300)
+
+    offenders = [
+        row["explanation"]["plain_english"]
+        for row in log.recent(limit=300)
+        if re.search(r"\bnot an? ", row["explanation"]["plain_english"])
+    ]
+    assert offenders == [], f"{len(offenders)} sentences negate a one-hot, e.g. {offenders[:1]}"
+
+
+def test_every_seeded_sentence_is_well_formed(scorer):
+    """No empty or truncated copy reaches the feed the dashboard opens on."""
+    log = InMemoryTransactionLog(maxlen=500)
+    raw = load_raw(Config.load().get("data.csv_path"))
+    seed_log(scorer, log, raw, limit=300)
+
+    for row in log.recent(limit=300):
+        sentence = row["explanation"]["plain_english"]
+        assert sentence.strip()
+        assert sentence.endswith(".")
+        assert "  " not in sentence
+
+
+def test_seed_restores_the_callers_profile_store(scorer):
+    """Ruling B9 swaps in a fresh store; the restore must actually happen."""
+    original = scorer.profiles
+    raw = load_raw(Config.load().get("data.csv_path"))
+    seed_log(scorer, InMemoryTransactionLog(), raw, limit=10)
+    assert scorer.profiles is original

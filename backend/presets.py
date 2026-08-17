@@ -43,6 +43,3 @@ PRESETS: dict[str, dict] = {
     },
 }
 
-
-def preset_names() -> list[str]:
-    return list(PRESETS)

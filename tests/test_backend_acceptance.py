@@ -108,7 +108,7 @@ def test_no_endpoint_reimplements_scoring(client, artifact_dir):
     ]
 
 
-def test_health_is_available_without_a_model(artifact_dir):
+def test_health_is_available_without_a_model():
     app = create_app(load_artifacts=False)
     with TestClient(app) as bare:
         assert bare.get("/health").json()["status"] == "ok"

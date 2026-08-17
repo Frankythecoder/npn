@@ -46,6 +46,7 @@ def test_in_memory_log_recent_rejects_a_non_positive_limit():
     for i in range(3):
         log.append({"transaction_id": f"T{i}", "scored_at": "2026-01-01T00:00:00"})
     assert log.recent(limit=0) == []
+    assert log.recent(limit=-1) == []
 
 
 def test_append_does_not_alias_the_caller_dict():

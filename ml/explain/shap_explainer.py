@@ -53,6 +53,36 @@ ONE_HOT_PHRASES: dict[str, tuple[str, str]] = {
 HIGH_PERCENTILE = 90.0
 LOW_PERCENTILE = 10.0
 
+# A one-hot column is "set" at 1.0 and "unset" at 0.0; 0.5 splits them.
+ONE_HOT_SET = 0.5
+
+
+def _is_set_or_not_one_hot(feature: dict) -> bool:
+    """True unless the feature is a one-hot sitting at its unset level."""
+    if feature["feature"] in ONE_HOT_PHRASES:
+        return feature["value"] >= ONE_HOT_SET
+    return True
+
+
+def _qualifies(feature: dict) -> bool:
+    """Whether a feature earns a place in the rendered sentence.
+
+    One-hots are facts, not magnitudes, so the percentile bands never apply to
+    them: a set one-hot always qualifies and a negated one never does. Applying
+    the bands to them would be actively wrong, because searchsorted maps every
+    one-hot at 1.0 to the 100th percentile and every one at 0.0 to
+    100 * (1 - prevalence), neither of which tracks how notable the level is.
+    That is not hypothetical -- TransactionType_Debit at 0.0 lands at 11.31
+    against a LOW_PERCENTILE of 10.0, so a 1.31-point margin of dataset luck
+    was the only thing keeping "not a debit transaction" out of the copy.
+    """
+    if feature["feature"] in ONE_HOT_PHRASES:
+        return feature["value"] >= ONE_HOT_SET
+    return (
+        feature["percentile"] >= HIGH_PERCENTILE
+        or feature["percentile"] <= LOW_PERCENTILE
+    )
+
 
 def _ordinal(n: int) -> str:
     """Render an integer with its English ordinal suffix (1st, 2nd, 3rd, 4th...).
@@ -119,7 +149,7 @@ class ShapExplainer:
             # The one-hot's own value picks the phrase: rendering the "set"
             # phrase regardless of value would state a false fact whenever
             # SHAP surfaces a column that is actually 0 for this row.
-            return set_phrase if value >= 0.5 else unset_phrase
+            return set_phrase if value >= ONE_HOT_SET else unset_phrase
         noun = FEATURE_PHRASES.get(column, column)
         rank = _ordinal(round(percentile))
         if percentile >= HIGH_PERCENTILE:
@@ -177,11 +207,18 @@ class ShapExplainer:
         qualifying = [
             phrase
             for feature, phrase in zip(top_features, phrases)
-            if (feature["feature"] in ONE_HOT_PHRASES and feature["value"] >= 0.5)
-            or feature["percentile"] >= HIGH_PERCENTILE
-            or feature["percentile"] <= LOW_PERCENTILE
+            if _qualifies(feature)
         ]
-        headline_phrases = qualifying[:2] if qualifying else phrases[:2]
+        # The fallback must exclude negated one-hots too. Filtering only the
+        # qualifying list and then falling back to the raw phrases would let
+        # the excluded phrase straight back in whenever nothing qualifies --
+        # which is most clean transactions, i.e. most of the feed.
+        eligible = [
+            phrase
+            for feature, phrase in zip(top_features, phrases)
+            if _is_set_or_not_one_hot(feature)
+        ]
+        headline_phrases = (qualifying or eligible or phrases)[:2]
 
         if is_anomaly:
             sentence = f"Flagged primarily due to {_join(headline_phrases)}."

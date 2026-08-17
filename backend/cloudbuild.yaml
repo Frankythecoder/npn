@@ -3,6 +3,10 @@ substitutions:
   _REPO: anomaly
   _SERVICE: anomaly-api
   _BUCKET: ""
+  # SHORT_SHA is only populated for repository-triggered builds; `gcloud
+  # builds submit` uploads a bare tarball, so it would resolve to "" and
+  # produce an invalid image tag. The README passes a real value.
+  _TAG: latest
 
 steps:
   - name: gcr.io/cloud-builders/docker
@@ -11,13 +15,13 @@ steps:
       - -f
       - backend/Dockerfile
       - -t
-      - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE}:${SHORT_SHA}
+      - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE}:${_TAG}
       - .
 
   - name: gcr.io/cloud-builders/docker
     args:
       - push
-      - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE}:${SHORT_SHA}
+      - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE}:${_TAG}
 
   - name: gcr.io/google.com/cloudsdktool/cloud-sdk
     entrypoint: gcloud
@@ -25,7 +29,7 @@ steps:
       - run
       - deploy
       - ${_SERVICE}
-      - --image=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE}:${SHORT_SHA}
+      - --image=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE}:${_TAG}
       - --region=${_REGION}
       - --platform=managed
       - --allow-unauthenticated

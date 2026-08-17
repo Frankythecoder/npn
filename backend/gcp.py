@@ -37,7 +37,7 @@ class GCSArtifactSource:
             return self.cache_dir
 
         bucket = self._client.bucket(self.bucket)
-        blobs = list(bucket.list_blobs(prefix=self.prefix))
+        blobs = list(bucket.list_blobs(prefix=self.prefix + "/"))
         if not blobs:
             raise FileNotFoundError(
                 f"no artifacts found at gs://{self.bucket}/{self.prefix}. "

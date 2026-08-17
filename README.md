@@ -36,7 +36,7 @@ curl -s -X POST http://localhost:8000/score \
     "AccountID": "AC00128",
     "DeviceID": "D000380",
     "Location": "San Diego",
-    "TransactionDate": "2023-08-01 03:14:00",
+    "TransactionDate": "2023-12-01 03:14:00",
     "TransactionAmount": 4800.00,
     "AccountBalance": 5000.00,
     "CustomerAge": 24,
@@ -115,13 +115,39 @@ gcloud firestore databases create --location="${REGION}"
 python -m ml.pipeline.train
 gcloud storage cp -r artifacts/* "${BUCKET}/artifacts/latest/"
 
-# 7. Build and deploy
-gcloud builds submit --config backend/cloudbuild.yaml \
-  --substitutions=_REGION="${REGION}",_REPO="${REPO}",_SERVICE="${SERVICE}",_BUCKET="${BUCKET#gs://}"
+# 6b. Grant the service accounts what the deploy and the runtime need.
+#     NOTE: not yet exercised against a real project — confirm on first deploy.
+PROJECT_NUMBER=$(gcloud projects describe "${PROJECT_ID}" --format='value(projectNumber)')
+CLOUDBUILD_SA="${PROJECT_NUMBER}@cloudbuild.gserviceaccount.com"
+RUNTIME_SA="${PROJECT_NUMBER}-compute@developer.gserviceaccount.com"
 
-# 8. Seed the feed so the dashboard is not empty
-SERVICE_URL=$(gcloud run services describe "${SERVICE}" --region "${REGION}" --format='value(status.url)')
-curl -s -X POST "${SERVICE_URL}/demo/inject" -H 'Content-Type: application/json' -d '{"preset":"normal"}'
+# Cloud Build needs to deploy to Cloud Run and act as the runtime account
+gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+  --member="serviceAccount:${CLOUDBUILD_SA}" --role="roles/run.admin"
+gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+  --member="serviceAccount:${CLOUDBUILD_SA}" --role="roles/iam.serviceAccountUser"
+
+# The running service needs to read the bundle and write to Firestore
+gcloud storage buckets add-iam-policy-binding "${BUCKET}" \
+  --member="serviceAccount:${RUNTIME_SA}" --role="roles/storage.objectViewer"
+gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+  --member="serviceAccount:${RUNTIME_SA}" --role="roles/datastore.user"
+
+# 7. Build and deploy.
+#    _TAG must be passed: cloudbuild.yaml defaults it to "latest", and the
+#    SHORT_SHA that repository-triggered builds provide is empty here.
+gcloud builds submit --config backend/cloudbuild.yaml \
+  --substitutions=_REGION="${REGION}",_REPO="${REPO}",_SERVICE="${SERVICE}",_BUCKET="${BUCKET#gs://}",_TAG="$(git rev-parse --short HEAD)"
+
+# 8. Seed the feed with ~200 real scored transactions, so the dashboard opens
+#    on a populated table rather than an empty one. Run as a one-shot job
+#    against the image just built: it already contains original.csv, the
+#    google-cloud libraries and the code, none of which are installed locally.
+IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO}/${SERVICE}:$(git rev-parse --short HEAD)"
+gcloud run jobs create anomaly-seed --image "${IMAGE}" --region "${REGION}" \
+  --set-env-vars=ANOMALY_ARTIFACT_SOURCE=gcs,ANOMALY_GCS_BUCKET="${BUCKET#gs://}",ANOMALY_TRANSACTION_LOG=firestore \
+  --command=python --args=-m,backend.seed,--limit,200
+gcloud run jobs execute anomaly-seed --region "${REGION}" --wait
 ```
 
 `backend/cloudbuild.yaml` builds the image from `backend/Dockerfile`, pushes
@@ -130,24 +156,40 @@ it to Artifact Registry, and deploys it to Cloud Run with
 `ANOMALY_TRANSACTION_LOG=firestore` set, so the deployed service reads the
 bundle uploaded in step 6 and writes scored transactions to Firestore.
 
-`backend/seed.py` (`python -m backend.seed`) can also populate the feed with
-a batch of real historical transactions rather than a single preset; point
-it at the deployed bucket and Firestore collection with the same `ANOMALY_*`
-environment variables the service itself uses.
+Step 8 runs `backend/seed.py` in the deployed image. It is deliberately not
+part of `python -m ml.pipeline.train`: putting it there would make offline
+training import Firestore, which would break the training tests on any
+machine without the `google-cloud` libraries. Running it locally is not
+supported for the same reason — those libraries are intentionally absent
+from `requirements.txt`.
 
 ### Min-instances toggle
 
-Cloud Run scales to zero by default, which costs nothing while idle but
-costs an 8-20s cold start on the next request — while a container starts,
-downloads the ~7MB artifact bundle, and unpickles eight detectors. Before a
-live demonstration, pin an instance so the first request is instant; scale
-back down afterwards:
+**The deploy in step 7 already sets `--min-instances=1`**, so the service is
+billed for one warm instance from the moment it goes up. That is deliberate:
+a cold start takes 8–20 seconds while the container starts, downloads the
+~7MB bundle and unpickles eight detectors, and a first request that slow
+during a live demonstration is unacceptable.
+
+It is not free, so turn it off when you are not demonstrating:
 
 ```bash
-# Before a demonstration — removes the 8-20s cold start
-gcloud run services update "${SERVICE}" --region "${REGION}" --min-instances=1
-# Afterwards — back to scale-to-zero
+# Not demonstrating — scale to zero and stop paying for idle time
 gcloud run services update "${SERVICE}" --region "${REGION}" --min-instances=0
+# Before a demonstration — pin an instance so the first request is instant
+gcloud run services update "${SERVICE}" --region "${REGION}" --min-instances=1
+```
+
+### Running the image locally
+
+The image defaults to `ANOMALY_ARTIFACT_SOURCE=local` and
+`ANOMALY_ARTIFACT_DIR=artifacts`, and `artifacts/` is **not** copied into it.
+So `docker run` with no environment set fails at startup. Either mount a
+trained bundle and point at it, or set the GCS variables the deployed service
+uses:
+
+```bash
+docker run -p 8080:8080 -v "$(pwd)/artifacts:/app/artifacts" <image>
 ```
 
 `backend/cloudbuild.yaml` also sets `--max-instances=1`. The profile store
@@ -168,7 +210,7 @@ current rates before relying on these numbers:
 
 | Item | Weekly, warm | Weekly, scale-to-zero |
 |---|---|---|
-| Cloud Run idle instance (1 vCPU, 2 GiB) | ~$1.50–2.00 | $0 |
+| Cloud Run idle instance (1 vCPU) | ~$1.50–2.00 | $0 |
 | Cloud Run requests (demo volume) | <$0.05 | <$0.05 |
 | Firestore reads/writes (dashboard polling) | <$0.10 | <$0.10 |
 | Cloud Storage (bundle ~7MB) | <$0.01 | <$0.01 |
