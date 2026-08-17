@@ -1,6 +1,7 @@
 import { Fragment } from "react";
 import Ballot from "./Ballot.jsx";
 import DetailPanel from "./DetailPanel.jsx";
+import { decisionKey, isOverride, APPROVE } from "../decisions.js";
 
 const money = new Intl.NumberFormat("en-US", {
   style: "currency",
@@ -14,7 +15,7 @@ function rowKey(result, index) {
   return `${result.transaction_id || "tx"}-${result.scored_at}-${index}`;
 }
 
-export default function Feed({ results, expandedKey, onToggle, freshKey }) {
+export default function Feed({ results, expandedKey, onToggle, freshKey, decisions, onDecide }) {
   if (!results.length) {
     return (
       <div className="feed">
@@ -31,6 +32,9 @@ export default function Feed({ results, expandedKey, onToggle, freshKey }) {
         const key = rowKey(result, index);
         const isOpen = key === expandedKey;
         const amount = Number(result.raw?.TransactionAmount ?? 0);
+        const dKey = decisionKey(result);
+        const decision = decisions[dKey];
+        const override = isOverride(result, decision?.verdict);
 
         return (
           <Fragment key={key}>
@@ -46,11 +50,36 @@ export default function Feed({ results, expandedKey, onToggle, freshKey }) {
               <span className="tally num">
                 {result.ensemble.votes_for}/{result.ensemble.votes_total}
               </span>
+              <span className="review">
+                {decision ? (
+                  <span
+                    className="badge"
+                    data-verdict={decision.verdict}
+                    data-override={override}
+                    title={
+                      override
+                        ? "Analyst overrode the model"
+                        : "Analyst agreed with the model"
+                    }
+                  >
+                    {decision.verdict === APPROVE ? "Approved" : "Blocked"}
+                    {override && <span className="flagdot" aria-hidden="true" />}
+                  </span>
+                ) : (
+                  <span className="badge pending">Review</span>
+                )}
+              </span>
               <span className="chev" aria-hidden="true">
                 ›
               </span>
             </button>
-            {isOpen && <DetailPanel result={result} />}
+            {isOpen && (
+              <DetailPanel
+                result={result}
+                decision={decision}
+                onDecide={(verdict) => onDecide(dKey, verdict)}
+              />
+            )}
           </Fragment>
         );
       })}

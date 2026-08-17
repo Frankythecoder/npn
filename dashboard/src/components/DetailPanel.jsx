@@ -1,4 +1,5 @@
 import Ballot from "./Ballot.jsx";
+import DecisionBar from "./DecisionBar.jsx";
 import ShapChart from "./ShapChart.jsx";
 
 const DETECTOR_LABELS = {
@@ -8,7 +9,7 @@ const DETECTOR_LABELS = {
   dbscan: "DBSCAN",
 };
 
-export default function DetailPanel({ result }) {
+export default function DetailPanel({ result, decision, onDecide }) {
   const { ensemble, detectors, explanation, warnings } = result;
 
   return (
@@ -52,6 +53,8 @@ export default function DetailPanel({ result }) {
             during training but do not vote.
           </p>
         </div>
+
+        <DecisionBar result={result} decision={decision} onDecide={onDecide} />
       </div>
 
       <div style={{ display: "grid", gap: 18, alignContent: "start" }}>

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Feed from "./components/Feed.jsx";
 import InjectPanel from "./components/InjectPanel.jsx";
 import { getHealth, getRecent } from "./api.js";
+import { loadDecisions, persistDecisions, summarise } from "./decisions.js";
 
 const POLL_MS = 3000;
 
@@ -11,6 +12,9 @@ export default function App() {
   const [freshKey, setFreshKey] = useState(null);
   const [live, setLive] = useState(null);
   const [feedError, setFeedError] = useState(null);
+  // Decisions live outside the feed rows: the poll replaces the list wholesale,
+  // so anything stored on a row object would be lost every few seconds.
+  const [decisions, setDecisions] = useState(loadDecisions);
 
   // A locally-injected result is prepended immediately rather than waiting for
   // the next poll, so the demo reads as instant. The next poll replaces the
@@ -63,6 +67,19 @@ export default function App() {
     };
   }, [refresh]);
 
+  function handleDecide(key, verdict) {
+    setDecisions((prev) => {
+      const next = { ...prev };
+      if (verdict === null) {
+        delete next[key];
+      } else {
+        next[key] = { verdict, at: new Date().toISOString() };
+      }
+      persistDecisions(next);
+      return next;
+    });
+  }
+
   function handleScored(result) {
     pendingRef.current = result;
     const key = `${result.transaction_id || "tx"}-${result.scored_at}-0`;
@@ -73,6 +90,7 @@ export default function App() {
   }
 
   const flagged = results.filter((r) => r.ensemble.is_anomaly).length;
+  const { reviewed, overrides } = summarise(results, decisions);
 
   return (
     <div className="app">
@@ -101,7 +119,17 @@ export default function App() {
             <span className="micro">Recent transactions</span>
             <span className="micro">
               <span className="num">{flagged}</span> flagged of{" "}
-              <span className="num">{results.length}</span>
+              <span className="num">{results.length}</span> ·{" "}
+              <span className="num">{reviewed}</span> reviewed
+              {overrides > 0 && (
+                <>
+                  {" · "}
+                  <span className="override-count">
+                    <span className="num">{overrides}</span> override
+                    {overrides === 1 ? "" : "s"}
+                  </span>
+                </>
+              )}
             </span>
           </div>
 
@@ -112,12 +140,15 @@ export default function App() {
             expandedKey={expandedKey}
             onToggle={setExpandedKey}
             freshKey={freshKey}
+            decisions={decisions}
+            onDecide={handleDecide}
           />
 
           <p className="footnote">
             Rows are ordered newest first and refresh every {POLL_MS / 1000}{" "}
-            seconds. Select a row to see how each model voted and what drove the
-            decision.
+            seconds. Select a row to see how each model voted, what drove the
+            decision, and to approve or block it. Analyst decisions are held in
+            this browser only — they are not sent to the API.
           </p>
         </main>
       </div>
