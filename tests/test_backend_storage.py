@@ -39,6 +39,15 @@ def test_in_memory_log_is_bounded():
     assert [r["transaction_id"] for r in log.recent(limit=10)] == ["T4", "T3"]
 
 
+def test_in_memory_log_recent_rejects_a_non_positive_limit():
+    """list(self._items)[-limit:] with limit=0 slices as [0:], returning the
+    entire history instead of nothing -- negative zero is zero in Python."""
+    log = InMemoryTransactionLog()
+    for i in range(3):
+        log.append({"transaction_id": f"T{i}", "scored_at": "2026-01-01T00:00:00"})
+    assert log.recent(limit=0) == []
+
+
 def test_append_does_not_alias_the_caller_dict():
     log = InMemoryTransactionLog()
     payload = {"transaction_id": "T1", "scored_at": "2026-01-01T00:00:00"}

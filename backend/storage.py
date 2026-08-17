@@ -53,6 +53,8 @@ class InMemoryTransactionLog:
         self._items.append(dict(result))
 
     def recent(self, limit: int) -> list[dict]:
+        if limit <= 0:
+            return []
         items = list(self._items)[-limit:]
         return [dict(item) for item in reversed(items)]
 
