@@ -8,8 +8,10 @@ class FakeBlob:
         self.name = name
         self._payload = payload
         self.downloaded_to = None
+        self.download_calls = 0
 
     def download_to_filename(self, path):
+        self.download_calls += 1
         self.downloaded_to = path
         with open(path, "wb") as fh:
             fh.write(self._payload)
@@ -18,8 +20,10 @@ class FakeBlob:
 class FakeBucket:
     def __init__(self, blobs):
         self._blobs = blobs
+        self.list_blobs_calls = 0
 
     def list_blobs(self, prefix=None):
+        self.list_blobs_calls += 1
         return [b for b in self._blobs if b.name.startswith(prefix or "")]
 
 
@@ -93,11 +97,24 @@ def test_gcs_source_downloads_every_blob_under_the_prefix(tmp_path):
 
 
 def test_gcs_source_is_idempotent(tmp_path):
-    blobs = [FakeBlob("artifacts/latest/manifest.json")]
+    """A second ensure_local() must skip re-listing and re-downloading, not
+    merely return the same path -- cache_dir is a fixed instance attribute
+    returned either way, so asserting equal return values alone would pass
+    even without the `_ready` guard."""
+    blob = FakeBlob("artifacts/latest/manifest.json")
+    bucket = FakeBucket([blob])
     source = GCSArtifactSource(
-        "bucket", "artifacts/latest", cache_dir=tmp_path, client=FakeGCSClient(FakeBucket(blobs))
+        "bucket", "artifacts/latest", cache_dir=tmp_path, client=FakeGCSClient(bucket)
     )
-    assert source.ensure_local() == source.ensure_local()
+
+    first = source.ensure_local()
+    assert bucket.list_blobs_calls == 1
+    assert blob.download_calls == 1
+
+    second = source.ensure_local()
+    assert second == first
+    assert bucket.list_blobs_calls == 1
+    assert blob.download_calls == 1
 
 
 def test_gcs_source_rejects_an_empty_prefix(tmp_path):
