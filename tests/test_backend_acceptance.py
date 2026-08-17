@@ -69,37 +69,39 @@ def test_the_pitch_flow_works_end_to_end(client):
     ]
 
 
-def test_no_endpoint_reimplements_scoring(client):
+def test_no_endpoint_reimplements_scoring(client, artifact_dir):
     """/score and /demo/inject must agree given identical input.
 
-    The two calls use distinct AccountID/DeviceID pairs, both otherwise unseen
-    by this test's scorer: the scorer mutates its ProfileStore on every call
-    (recording each transaction as history for the next), so scoring the same
-    account twice in a row -- once direct, once injected -- would make the
-    second call see elevated DailyAccountVolume and a near-zero
-    TimeSinceLastTx_Hours purely from the first call's side effect, not from
-    any divergence between the two endpoints. Distinct, equally-fresh
-    identities isolate the comparison to what this test is actually about:
-    both routes computing identical votes from identical preset fields.
+    Both calls use the exact same account_drain preset fields -- the only
+    override is TransactionID, which is not a feature and cannot affect the
+    engineered frame. The scorer mutates its ProfileStore on every call, so
+    without intervention the second (injected) call would see the first
+    (direct) call's transaction as history -- a different
+    TimeSinceLastTx_Hours, DailyAccountVolume, etc. -- and any votes_for
+    difference would be a state-mutation artifact, not evidence that the two
+    endpoints diverge. Rebuilding the scorer from the same artifact bundle
+    before the second call gives it the same pristine profile state the
+    first call saw, so the comparison is actually between two code paths
+    given identical input, not between two different accounts.
     """
     from backend.presets import PRESETS
 
     fields = {**PRESETS["account_drain"]["fields"], "TransactionID": "CMP-1"}
     direct = client.post("/score", json=fields).json()
 
-    deps.get_log()  # same process, same scorer
+    # Reset to a freshly-loaded scorer so the injected call starts from the
+    # same clean profile store the direct call did, rather than inheriting
+    # the direct call's side effect.
+    deps.override(
+        Scorer(load_bundle(artifact_dir), Config.load().get("ensemble.threshold")),
+        deps.get_log(),
+    )
     injected = client.post(
         "/demo/inject",
-        json={
-            "preset": "account_drain",
-            "overrides": {
-                "TransactionID": "CMP-2",
-                "AccountID": "AC-CMP-2",
-                "DeviceID": "D-CMP-2",
-            },
-        },
+        json={"preset": "account_drain", "overrides": {"TransactionID": "CMP-2"}},
     ).json()
 
+    assert direct["features"] == injected["features"]
     assert direct["ensemble"]["votes_for"] == injected["ensemble"]["votes_for"]
     assert [d["name"] for d in direct["detectors"]] == [
         d["name"] for d in injected["detectors"]
