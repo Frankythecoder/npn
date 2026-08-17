@@ -69,10 +69,39 @@ python -m pytest
 |---|---|---|
 | POST | `/score` | Score one transaction |
 | POST | `/batch-score` | Score up to 500 transactions |
+| POST | `/score-csv` | Score one chunk of an uploaded CSV |
 | GET | `/transactions/recent` | Read back the scored-transaction feed, newest first |
 | POST | `/demo/inject` | Score a named preset (with optional field overrides) |
 | GET | `/demo/presets` | List the available demo presets |
 | GET | `/health` | Liveness/readiness probe |
+
+### Uploading a CSV
+
+The dashboard's **Upload CSV** tab takes a file with `original.csv`'s columns or
+any subset of them, parses it in the browser, and posts it to `/score-csv` in
+chunks. `/score` and `/batch-score` are unchanged and still require a complete,
+validated transaction — the tolerances a file needs are the opposite ones, so
+they live behind their own endpoint rather than loosening `TransactionIn`:
+
+- **A file is refused** only if it carries none of `TransactionAmount`,
+  `AccountBalance`, `CustomerAge`, `TransactionDuration` or `LoginAttempts`.
+- **Absent columns are filled** from the artifact bundle — the training median
+  for numerics, the most prevalent level for categoricals, the most frequent
+  city for `Location` — and each fill is reported in the row's `warnings`.
+  `AccountID`, `DeviceID` and `TransactionDate` are synthesised instead, which
+  routes the row through `transform_one`'s unseen-account path rather than
+  inventing a history for it.
+- **A row is rejected on its own**, with its line number, if a column the file
+  does supply is empty or unparseable, or if the ml layer refuses it. The rest
+  of the chunk still scores.
+- **`IP Address`, `MerchantID`, `PreviousTransactionDate` and `TransactionID`**
+  are recognised and ignored, so `original.csv` uploads unchanged.
+
+Each upload scores against **its own profile store**, discarded afterwards. The
+store the bundle ships with has already observed every training row, so scoring
+that data against it would make `DailyAccountVolume` and `DailyDeviceVelocity`
+read one higher than they ever did in training and flag the entire file —
+`backend/seed.py` hits the same wall and solves it the same way.
 
 ## Deploying to Cloud Run
 

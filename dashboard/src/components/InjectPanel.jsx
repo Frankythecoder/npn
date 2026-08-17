@@ -77,10 +77,6 @@ export default function InjectPanel({ onScored }) {
 
   return (
     <form onSubmit={submit}>
-      <div className="section-head">
-        <span className="micro">Inject a transaction</span>
-      </div>
-
       <div className="presets">
         {presets.map((preset) => (
           <button

@@ -26,7 +26,9 @@
   --away: #2ec4b6;
 
   --radius: 6px;
-  --rail: 380px;
+  /* Narrowed from 380px when the batch table arrived: eight columns of scored
+     results need the room more than the input panel does. */
+  --rail: 340px;
 
   --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
     "Helvetica Neue", Arial, sans-serif;
@@ -718,4 +720,400 @@ button {
 
 .linkish:hover {
   color: var(--ink);
+}
+
+/* ---------- input tabs ----------
+   Two ways in: one transaction at a time, or a whole file. The strip replaces
+   the panel heading rather than sitting under one, so the rail gains a mode
+   switch without gaining a row of chrome. */
+
+.tabs {
+  display: flex;
+  gap: 2px;
+  margin-bottom: 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+.tab {
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  padding: 7px 10px;
+  margin-bottom: -1px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--ink-faint);
+  transition:
+    color 140ms ease,
+    border-color 140ms ease;
+}
+
+.tab:hover {
+  color: var(--ink-dim);
+}
+
+.tab[aria-selected="true"] {
+  color: var(--ink);
+  border-bottom-color: var(--toward-low);
+}
+
+/* ---------- csv upload ---------- */
+
+.drop {
+  border: 1px dashed var(--line);
+  border-radius: var(--radius);
+  padding: 20px 16px;
+  text-align: center;
+  background: var(--surface-hi);
+  transition:
+    border-color 140ms ease,
+    background 140ms ease;
+}
+
+.drop[data-dragging="true"] {
+  border-color: var(--toward-low);
+  background: rgba(245, 165, 36, 0.06);
+}
+
+.drop-btn {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 9px 14px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.drop-btn:hover:not(:disabled) {
+  border-color: var(--ink-faint);
+}
+
+.drop-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.drop .why {
+  font-size: 12px;
+  color: var(--ink-dim);
+  line-height: 1.45;
+}
+
+/* The pre-flight column report. Showing what will be filled before anything is
+   sent is the whole point — a verdict built on nine defaulted columns is a very
+   different claim from one built on the file's own data. */
+
+.col-report {
+  margin-top: 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-hi);
+  padding: 12px;
+}
+
+.col-report-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+.col-report-head .fname {
+  font-size: 13px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.col-report-head .num {
+  font-size: 12px;
+  color: var(--ink-dim);
+}
+
+.col-group + .col-group {
+  margin-top: 12px;
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.chip {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  line-height: 1.6;
+  padding: 1px 6px;
+  border-radius: 3px;
+  border: 1px solid var(--line);
+  color: var(--ink-dim);
+  background: var(--ground);
+}
+
+.chip[data-tone="ok"] {
+  color: var(--away);
+  border-color: rgba(46, 196, 182, 0.35);
+}
+
+.chip[data-tone="fill"] {
+  color: var(--toward-low);
+  border-color: rgba(245, 165, 36, 0.35);
+}
+
+.progress-block {
+  margin-top: 16px;
+}
+
+.progress-line {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.progress-line .num {
+  font-size: 12px;
+  color: var(--ink-dim);
+}
+
+.progress-track {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--line);
+  overflow: hidden;
+}
+
+.progress-bar {
+  display: block;
+  height: 100%;
+  background: var(--toward-low);
+  transition: width 200ms ease;
+}
+
+/* ---------- batch results ----------
+   A scored file, split by verdict. The four detector percentiles sit side by
+   side so models can be compared down a column, which is the thing a single
+   expanded row cannot show. */
+
+.batch-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.batch-title {
+  font-size: 16px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.batch-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 22px;
+}
+
+.batch-stat {
+  flex: 1 1 96px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.batch-stat .v {
+  font-size: 19px;
+  font-weight: 650;
+  line-height: 1.1;
+}
+
+.batch-stat[data-tone="high"] .v {
+  color: var(--toward-high);
+}
+
+.batch-stat[data-tone="away"] .v {
+  color: var(--away);
+}
+
+.batch-stat[data-tone="dim"] .v {
+  color: var(--ink-faint);
+}
+
+.batch-section + .batch-section {
+  margin-top: 26px;
+}
+
+.section-head .micro[data-tone="high"] {
+  color: var(--toward-high);
+}
+
+.section-head .micro[data-tone="away"] {
+  color: var(--away);
+}
+
+/* Wide content scrolls inside its own container rather than squashing the
+   score columns until the digits stop lining up. */
+.batch-wrap {
+  overflow-x: auto;
+}
+
+.batch-table {
+  min-width: 760px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.batch-row {
+  display: grid;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 14px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+}
+
+.batch-table[data-decidable="true"] .batch-row {
+  grid-template-columns: 92px minmax(110px, 1fr) 96px repeat(4, 56px) 156px;
+}
+
+.batch-table[data-decidable="false"] .batch-row {
+  grid-template-columns: 92px minmax(110px, 1fr) 96px repeat(4, 56px);
+}
+
+.batch-row:last-child {
+  border-bottom: none;
+}
+
+.batch-row:not(.batch-header):hover {
+  background: var(--surface-hi);
+}
+
+.batch-header {
+  background: var(--surface-hi);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  font-weight: 600;
+}
+
+.batch-row .r {
+  text-align: right;
+}
+
+.batch-row .verdict {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  font-size: 12px;
+}
+
+.batch-row .verdict .tally {
+  font-size: 11px;
+  color: var(--ink-dim);
+  text-align: left;
+}
+
+.batch-row .txid {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--ink-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.batch-row .amount {
+  font-size: 13px;
+}
+
+.batch-row .score {
+  font-size: 12px;
+  color: var(--ink-faint);
+}
+
+/* A detector that cast a vote is the reason the row is here — mark it, so the
+   tally in the first column can be read back to the models that produced it. */
+.batch-row .score[data-cast="true"] {
+  color: var(--toward-high);
+  font-weight: 600;
+}
+
+.batch-decide {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.batch-decide .decide {
+  padding: 5px 6px;
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.batch-decide[data-override="true"] {
+  position: relative;
+}
+
+.batch-decide[data-override="true"]::after {
+  content: "";
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--toward-low);
+}
+
+.rejects {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.reject-row {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
+  gap: 12px;
+  padding: 8px 14px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+  font-size: 12px;
+  color: var(--ink-dim);
+}
+
+.reject-row:last-child {
+  border-bottom: none;
+}
+
+.reject-row .num {
+  color: var(--ink-faint);
+}
+
+@media (max-width: 900px) {
+  .batch-head {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+  .batch-stat {
+    flex-basis: 72px;
+  }
 }

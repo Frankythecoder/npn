@@ -9,7 +9,8 @@ from fastapi import APIRouter, HTTPException, Query
 
 from backend import deps
 from backend.config import Settings
-from backend.schemas import BatchIn, BatchOut, TransactionIn
+from backend.csvingest import MissingCrucialColumns, normalise_rows
+from backend.schemas import BatchIn, BatchOut, CsvBatchIn, TransactionIn
 
 router = APIRouter(tags=["scoring"])
 
@@ -33,6 +34,57 @@ def score(payload: TransactionIn) -> dict:
 @router.post("/batch-score", response_model=BatchOut)
 def batch_score(payload: BatchIn) -> BatchOut:
     return BatchOut(results=[_score_one(item) for item in payload.transactions])
+
+
+@router.post("/score-csv")
+def score_csv(payload: CsvBatchIn) -> dict:
+    """Score one chunk of an uploaded CSV.
+
+    Distinct from /batch-score because the tolerances are opposite. There, a
+    transaction is a complete, validated object and anything else is a client
+    error. Here a partial column set is expected and a bad row is routine, so
+    only a file carrying no crucial column at all is refused outright -- every
+    other failure is reported against its line number and the rest still scores.
+
+    Keeping the two apart is what lets TransactionIn go on forbidding unknown
+    fields, which is the guarantee /score depends on.
+    """
+    try:
+        accepted, rejected = normalise_rows(
+            payload.columns,
+            payload.rows,
+            deps.get_csv_defaults(),
+            payload.start_row,
+        )
+    except MissingCrucialColumns as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    scorer = deps.get_scorer()
+    # Score against the upload's own history rather than the service's. Restored
+    # in the finally so an upload cannot disturb the live feed's profile state --
+    # the same swap seed.py makes, for the same reason.
+    original_profiles = scorer.profiles
+    scorer.profiles = deps.get_batch_profiles(payload.upload_id)
+
+    results = []
+    try:
+        for row in accepted:
+            try:
+                result = scorer.score_transaction(row.payload)
+            except ValueError as exc:
+                # The ml layer rejects impossible inputs (a zero balance). One
+                # such row must not take the other 499 down with it.
+                rejected.append({"row": row.row, "reason": str(exc)})
+                continue
+            # Fills first: they explain the engineered warnings that follow.
+            result["warnings"] = [*row.warnings, *result["warnings"]]
+            deps.get_log().append(result)
+            results.append(result)
+    finally:
+        scorer.profiles = original_profiles
+
+    rejected.sort(key=lambda item: item["row"])
+    return {"results": results, "rejected": rejected}
 
 
 @router.get("/transactions/recent")

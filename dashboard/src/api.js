@@ -42,3 +42,13 @@ export const inject = (preset, overrides) =>
   request("/demo/inject", jsonPost({ preset, overrides }));
 
 export const getHealth = () => request("/health");
+
+// One chunk of an uploaded CSV. `startRow` is the line number of the first row
+// within the original file, so a rejection in a later chunk still names a line
+// the user can go and look at. `uploadId` ties the chunks of one file together
+// so an account's history accumulates across a chunk boundary.
+export const scoreCsv = (columns, rows, startRow, uploadId) =>
+  request(
+    "/score-csv",
+    jsonPost({ columns, rows, start_row: startRow, upload_id: uploadId }),
+  );

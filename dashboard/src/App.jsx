@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import BatchResults from "./components/BatchResults.jsx";
 import Feed from "./components/Feed.jsx";
-import InjectPanel from "./components/InjectPanel.jsx";
+import InputTabs from "./components/InputTabs.jsx";
 import { getHealth, getRecent } from "./api.js";
 import { loadDecisions, persistDecisions, summarise } from "./decisions.js";
 
@@ -15,6 +16,10 @@ export default function App() {
   // Decisions live outside the feed rows: the poll replaces the list wholesale,
   // so anything stored on a row object would be lost every few seconds.
   const [decisions, setDecisions] = useState(loadDecisions);
+  // A scored upload. Held here rather than in the rail so it survives switching
+  // back to the Scenarios tab, and so the feed and the batch share one decisions
+  // map. Null means the live feed owns the main column.
+  const [batch, setBatch] = useState(null);
 
   // A locally-injected result is prepended immediately rather than waiting for
   // the next poll, so the demo reads as instant. The next poll replaces the
@@ -111,47 +116,86 @@ export default function App() {
 
       <div className="body">
         <aside className="rail">
-          <InjectPanel onScored={handleScored} />
+          <InputTabs onScored={handleScored} onBatch={setBatch} />
         </aside>
 
         <main className="main">
-          <div className="section-head">
-            <span className="micro">Recent transactions</span>
-            <span className="micro">
-              <span className="num">{flagged}</span> flagged of{" "}
-              <span className="num">{results.length}</span> ·{" "}
-              <span className="num">{reviewed}</span> reviewed
-              {overrides > 0 && (
-                <>
-                  {" · "}
-                  <span className="override-count">
-                    <span className="num">{overrides}</span> override
-                    {overrides === 1 ? "" : "s"}
-                  </span>
-                </>
-              )}
-            </span>
-          </div>
-
-          {feedError && <div className="error">{feedError}</div>}
-
-          <Feed
-            results={results}
-            expandedKey={expandedKey}
-            onToggle={setExpandedKey}
-            freshKey={freshKey}
-            decisions={decisions}
-            onDecide={handleDecide}
-          />
-
-          <p className="footnote">
-            Rows are ordered newest first and refresh every {POLL_MS / 1000}{" "}
-            seconds. Select a row to see how each model voted, what drove the
-            decision, and to approve or block it. Analyst decisions are held in
-            this browser only — they are not sent to the API.
-          </p>
+          {batch ? (
+            <BatchResults
+              batch={batch}
+              decisions={decisions}
+              onDecide={handleDecide}
+              onClose={() => setBatch(null)}
+            />
+          ) : (
+            <LiveFeed
+              results={results}
+              flagged={flagged}
+              reviewed={reviewed}
+              overrides={overrides}
+              feedError={feedError}
+              expandedKey={expandedKey}
+              onToggle={setExpandedKey}
+              freshKey={freshKey}
+              decisions={decisions}
+              onDecide={handleDecide}
+            />
+          )}
         </main>
       </div>
     </div>
+  );
+}
+
+function LiveFeed({
+  results,
+  flagged,
+  reviewed,
+  overrides,
+  feedError,
+  expandedKey,
+  onToggle,
+  freshKey,
+  decisions,
+  onDecide,
+}) {
+  return (
+    <>
+      <div className="section-head">
+        <span className="micro">Recent transactions</span>
+        <span className="micro">
+          <span className="num">{flagged}</span> flagged of{" "}
+          <span className="num">{results.length}</span> ·{" "}
+          <span className="num">{reviewed}</span> reviewed
+          {overrides > 0 && (
+            <>
+              {" · "}
+              <span className="override-count">
+                <span className="num">{overrides}</span> override
+                {overrides === 1 ? "" : "s"}
+              </span>
+            </>
+          )}
+        </span>
+      </div>
+
+      {feedError && <div className="error">{feedError}</div>}
+
+      <Feed
+        results={results}
+        expandedKey={expandedKey}
+        onToggle={onToggle}
+        freshKey={freshKey}
+        decisions={decisions}
+        onDecide={onDecide}
+      />
+
+      <p className="footnote">
+        Rows are ordered newest first and refresh every {POLL_MS / 1000} seconds.
+        Select a row to see how each model voted, what drove the decision, and to
+        approve or block it. Analyst decisions are held in this browser only —
+        they are not sent to the API.
+      </p>
+    </>
   );
 }
