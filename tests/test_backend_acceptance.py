@@ -112,3 +112,42 @@ def test_health_is_available_without_a_model():
     app = create_app(load_artifacts=False)
     with TestClient(app) as bare:
         assert bare.get("/health").json()["status"] == "ok"
+
+
+def test_startup_wires_the_real_source_and_log(monkeypatch, artifact_dir):
+    """Exercise deps.startup() — the code Cloud Run actually runs at cold start.
+
+    Every other test in the suite passes load_artifacts=False and injects
+    through deps.override, so the real wiring (artifact source -> load_bundle
+    -> Scorer -> transaction log) was proven only by deploying. This is also
+    the positive control for create_app's flag: elsewhere we assert that
+    load_artifacts=False skips loading, and nothing asserted that True loads.
+    """
+    monkeypatch.setenv("ANOMALY_ARTIFACT_DIR", str(artifact_dir))
+    monkeypatch.setenv("ANOMALY_ARTIFACT_SOURCE", "local")
+    monkeypatch.setenv("ANOMALY_TRANSACTION_LOG", "memory")
+    deps.shutdown()
+
+    app = create_app(load_artifacts=True)
+    with TestClient(app) as client:
+        assert client.get("/health").json()["model_loaded"] is True
+        scored = client.post(
+            "/demo/inject", json={"preset": "account_drain"}
+        )
+        assert scored.status_code == 200
+        assert scored.json()["ensemble"]["votes_total"] == 4
+        assert len(client.get("/transactions/recent").json()) == 1
+
+    assert deps.is_loaded() is False
+
+
+def test_startup_fails_loudly_on_a_missing_artifact_directory(monkeypatch, tmp_path):
+    """A misconfigured bundle path must surface, not yield a half-built app."""
+    monkeypatch.setenv("ANOMALY_ARTIFACT_DIR", str(tmp_path / "absent"))
+    monkeypatch.setenv("ANOMALY_ARTIFACT_SOURCE", "local")
+    deps.shutdown()
+
+    with pytest.raises(FileNotFoundError, match="artifact directory"):
+        with TestClient(create_app(load_artifacts=True)):
+            pass
+    deps.shutdown()
