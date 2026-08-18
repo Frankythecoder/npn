@@ -992,20 +992,34 @@ button {
 }
 
 .batch-table {
-  min-width: 640px;
+  min-width: 672px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   overflow: hidden;
 }
 
+/* The trailing track is the expand chevron's. */
 .batch-row {
   display: grid;
-  grid-template-columns: 92px minmax(110px, 1fr) 96px repeat(4, 56px);
+  grid-template-columns: 92px minmax(110px, 1fr) 96px repeat(4, 56px) 16px;
   align-items: center;
   gap: 12px;
   padding: 9px 14px;
   background: var(--surface);
   border-bottom: 1px solid var(--line);
+}
+
+/* Flagged rows are buttons that open their review drawer; the header stays a
+   div. Scoped to the element so the header keeps its own type treatment. */
+button.batch-row {
+  width: 100%;
+  border: none;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  transition: background 120ms ease;
 }
 
 .batch-row:last-child {
@@ -1067,6 +1081,95 @@ button {
   font-weight: 600;
 }
 
+.batch-row .chev {
+  color: var(--ink-faint);
+  transition: transform 160ms ease;
+  justify-self: center;
+}
+
+.batch-row[aria-expanded="true"] .chev {
+  transform: rotate(90deg);
+}
+
+.batch-row[aria-expanded="true"] {
+  background: var(--surface-hi);
+}
+
+/* ---------- batch review drawer ----------
+   The same two readings the live feed's detail panel gives — the ballot behind
+   the verdict, and what SHAP attributes it to — laid out on the same split so
+   the two views read identically. */
+
+.batch-detail {
+  display: grid;
+  grid-template-columns: minmax(0, 280px) minmax(0, 1fr);
+  gap: 20px;
+  padding: 16px 14px 18px;
+  background: var(--ground);
+  border-bottom: 1px solid var(--line);
+}
+
+.batch-attrib {
+  display: grid;
+  gap: 18px;
+  align-content: start;
+}
+
+.batch-dets {
+  display: grid;
+  gap: 5px;
+}
+
+/* Raw score and percentile both get a column: the percentile ranks the row,
+   the raw score is what the model actually emitted. */
+.batch-det {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr) 62px 46px;
+  align-items: center;
+  gap: 9px;
+  font-size: 12px;
+  padding: 3px 0;
+}
+
+.batch-det .mark {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  background: var(--line);
+}
+
+.batch-det[data-cast="true"] .mark {
+  background: var(--toward-high);
+}
+
+.batch-det .dname {
+  font-family: var(--mono);
+  color: var(--ink-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.batch-det[data-cast="true"] .dname {
+  color: var(--ink);
+}
+
+.batch-det .raw,
+.batch-det .pct {
+  text-align: right;
+  font-size: 11px;
+  color: var(--ink-faint);
+}
+
+.batch-det .pct {
+  color: var(--ink-dim);
+}
+
+.batch-det[data-cast="true"] .pct {
+  color: var(--toward-high);
+  font-weight: 600;
+}
+
 .rejects {
   border: 1px solid var(--line);
   border-radius: var(--radius);
@@ -1100,5 +1203,9 @@ button {
   }
   .batch-stat {
     flex-basis: 72px;
+  }
+  /* Same collapse the feed's detail panel makes at this width. */
+  .batch-detail {
+    grid-template-columns: 1fr;
   }
 }
