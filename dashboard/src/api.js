@@ -1,11 +1,19 @@
-// Every call is same-origin. In development Vite proxies these paths to the
-// API on :8000; in a deployment where the dashboard is served alongside the
-// API, they resolve directly. No base URL to configure either way.
+// By default, use same-origin paths so the dashboard works when served beside
+// the API. For Cloud Run + Firebase Hosting, set VITE_API_BASE_URL to the
+// deployed backend origin before building.
+const API_BASE = import.meta.env.VITE_API_BASE_URL || "";
+
+function buildUrl(path) {
+  if (!path.startsWith("http")) {
+    return `${API_BASE}${path}`;
+  }
+  return path;
+}
 
 async function request(path, options) {
   let response;
   try {
-    response = await fetch(path, options);
+    response = await fetch(buildUrl(path), options);
   } catch {
     // fetch() only rejects when the request never reached a server.
     throw new Error("Can't reach the API. Is the backend running?");
