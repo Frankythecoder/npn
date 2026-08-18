@@ -14,7 +14,7 @@ def trained(tmp_path_factory):
 
 def test_every_detector_flags_the_contamination_rate(trained):
     report, _ = trained
-    assert len(report.rate_table) == 8
+    assert len(report.rate_table) == 7
     for name, rate in report.rate_table.items():
         assert 0.045 <= rate <= 0.055, f"{name} flagged {rate:.4f}"
         assert report.flag_counts[name] == 126, name
@@ -63,7 +63,7 @@ def test_surrogate_fidelity_meets_the_configured_floor(trained):
 def test_bundle_is_written_and_loadable(trained):
     _, dest = trained
     bundle = load_bundle(dest)
-    assert len(bundle.detectors) == 8
+    assert len(bundle.detectors) == 7
     assert set(bundle.scalers) == {"standard", "robust", "continuous"}
     assert bundle.surrogate is not None
     assert bundle.manifest["rate_table"]
@@ -77,7 +77,7 @@ def test_manifest_records_library_versions_and_a_config_hash(trained):
     _, dest = trained
     bundle = load_bundle(dest)
     versions = bundle.manifest["versions"]
-    for lib in ("sklearn", "xgboost", "numpy", "pandas", "shap"):
+    for lib in ("sklearn", "catboost", "numpy", "pandas", "shap"):
         assert lib in versions
         assert isinstance(versions[lib], str) and versions[lib]
 
@@ -126,3 +126,59 @@ def test_training_is_deterministic(tmp_path):
     assert a.rate_table == b.rate_table
     assert a.vote_histogram == b.vote_histogram
     assert a.ensemble_flagged == b.ensemble_flagged
+
+
+# ---------- the held-out split ----------
+
+
+def test_the_split_partitions_every_row_exactly_once(trained):
+    report, _ = trained
+    sizes = report.split_sizes
+    assert set(sizes) == {"train", "validation", "test"}
+    assert sum(sizes.values()) == report.n_rows
+
+
+def test_the_split_honours_the_configured_70_20_10(trained):
+    report, _ = trained
+    n = report.n_rows
+    sizes = report.split_sizes
+    assert sizes["train"] / n == pytest.approx(0.70, abs=0.01)
+    assert sizes["validation"] / n == pytest.approx(0.20, abs=0.01)
+    assert sizes["test"] / n == pytest.approx(0.10, abs=0.01)
+
+
+def test_every_detector_is_scored_on_every_split(trained):
+    report, _ = trained
+    assert set(report.split_rates) == set(report.rate_table)
+    for name, rates in report.split_rates.items():
+        assert set(rates) == {"train", "validation", "test"}, name
+
+
+def test_the_frozen_threshold_still_cuts_roughly_the_rate_on_held_out_rows(trained):
+    """The point of the split: a threshold fitted on train must generalise.
+
+    Wide bounds deliberately -- this catches a threshold that collapsed or ran
+    away on unseen rows, not ordinary sampling noise on a 251-row test split.
+    """
+    report, _ = trained
+    for name, rates in report.split_rates.items():
+        for part in ("validation", "test"):
+            assert 0.01 <= rates[part] <= 0.15, f"{name} {part} {rates[part]:.2%}"
+
+
+def test_the_shipped_detectors_are_still_fitted_on_every_row(trained):
+    """Holding rows back must not cost the bundle anything.
+
+    Spec 6.1 fixes each detector at 126 flagged rows, which is the
+    contamination rate over all 2,512 -- not over the 70% used to evaluate.
+    """
+    report, _ = trained
+    for name, count in report.flag_counts.items():
+        assert count == 126, f"{name} flagged {count}"
+
+
+def test_the_split_is_recorded_in_the_manifest(trained):
+    _, dest = trained
+    manifest = load_bundle(dest).manifest
+    assert sum(manifest["split_sizes"].values()) == manifest["n_rows"]
+    assert set(manifest["split_rates"]) == set(manifest["rate_table"])

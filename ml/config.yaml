@@ -1,5 +1,19 @@
 data:
   csv_path: original.csv
+  # Held-out evaluation split, applied before any detector is fitted.
+  #
+  # The detectors are unsupervised and the dataset carries no label, so this
+  # cannot measure detection accuracy -- there is no such number. What it
+  # measures is whether a threshold frozen on the training rows still cuts the
+  # contamination rate on rows the detector never saw. A rate that holds means
+  # the threshold generalises; one that drifts means it was fitted to noise.
+  #
+  # The shipped bundle is refitted on 100% afterwards, the same way
+  # ml/explain/surrogate.py scores its held-out AUC and then refits.
+  split:
+    train: 0.70
+    validation: 0.20
+    test: 0.10
 
 detectors:
   contamination: 0.05
@@ -22,8 +36,6 @@ detectors:
   kmeans:
     n_clusters: 8
     n_init: 10
-  pca_reconstruction:
-    n_components: 0.95
 
 ensemble:
   threshold: 0.5
@@ -34,6 +46,13 @@ surrogate:
 
 validation:
   sane_band: [0.03, 0.07]
+
+# PCA is the dimensionality reduction step behind the figures: it feeds the
+# t-SNE embedding, the 2-D projections every structure plot is drawn on, and the
+# reconstruction-error diagnostic. Only ml.viz reads these.
+viz:
+  pca_components: 0.95
+  max_embedding_rows: 2000
 
 storage:
   local_dir: artifacts

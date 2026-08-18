@@ -47,8 +47,18 @@ export const getHealth = () => request("/health");
 // within the original file, so a rejection in a later chunk still names a line
 // the user can go and look at. `uploadId` ties the chunks of one file together
 // so an account's history accumulates across a chunk boundary.
-export const scoreCsv = (columns, rows, startRow, uploadId) =>
+//
+// `fillMissing` opts the file into having absent scoring columns filled from the
+// training distribution. Off unless the operator ticked the box, because a
+// filled row's verdict is partly a verdict about the training data.
+export const scoreCsv = (columns, rows, startRow, uploadId, fillMissing = false) =>
   request(
     "/score-csv",
-    jsonPost({ columns, rows, start_row: startRow, upload_id: uploadId }),
+    jsonPost({
+      columns,
+      rows,
+      start_row: startRow,
+      upload_id: uploadId,
+      fill_missing: fillMissing,
+    }),
   );

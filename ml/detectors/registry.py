@@ -18,7 +18,6 @@ from ml.detectors.kmeans import KMeansDetector
 from ml.detectors.lof import LOFDetector
 from ml.detectors.mcd import MCDDetector
 from ml.detectors.one_class_svm import OneClassSVMDetector
-from ml.detectors.pca_reconstruction import PCAReconstructionDetector
 
 DETECTOR_ORDER = [
     "isolation_forest",
@@ -28,12 +27,11 @@ DETECTOR_ORDER = [
     "mcd",
     "gmm",
     "kmeans",
-    "pca_reconstruction",
 ]
 
 
 def build_detectors(cfg: Config) -> list[BaseDetector]:
-    """Instantiate all eight detectors with their configured hyperparameters."""
+    """Instantiate all seven detectors with their configured hyperparameters."""
     contamination = cfg.get("detectors.contamination")
     random_state = cfg.get("detectors.random_state")
 
@@ -69,11 +67,6 @@ def build_detectors(cfg: Config) -> list[BaseDetector]:
             contamination=contamination,
             n_clusters=cfg.get("detectors.kmeans.n_clusters"),
             n_init=cfg.get("detectors.kmeans.n_init"),
-            random_state=random_state,
-        ),
-        PCAReconstructionDetector(
-            contamination=contamination,
-            n_components=cfg.get("detectors.pca_reconstruction.n_components"),
             random_state=random_state,
         ),
     ]

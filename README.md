@@ -20,7 +20,7 @@ Install dependencies, then train, run, and score:
 ```bash
 pip install -r requirements.txt
 
-# Train: fits all eight detectors and writes the artifact bundle to artifacts/
+# Train: fits all seven detectors and writes the artifact bundle to artifacts/
 python -m ml.pipeline.train
 
 # Run: serves on http://localhost:8000 using the local artifact directory
@@ -197,7 +197,7 @@ from `requirements.txt`.
 **The deploy in step 7 already sets `--min-instances=1`**, so the service is
 billed for one warm instance from the moment it goes up. That is deliberate:
 a cold start takes 8–20 seconds while the container starts, downloads the
-~7MB bundle and unpickles eight detectors, and a first request that slow
+~7MB bundle and unpickles seven detectors, and a first request that slow
 during a live demonstration is unacceptable.
 
 It is not free, so turn it off when you are not demonstrating:

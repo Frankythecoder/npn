@@ -48,9 +48,9 @@ export default function DetailPanel({ result, decision, onDecide }) {
             ))}
           </div>
           <p className="footnote">
-            Percentiles rank against each model's own training scores. Four
-            other models — MCD, GMM, K-Means, PCA-reconstruction — are fitted
-            during training but do not vote.
+            Percentiles rank against each model's own training scores. Three
+            other models — MCD, GMM, K-Means — are fitted during training but do
+            not vote.
           </p>
         </div>
 

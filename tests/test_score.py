@@ -115,7 +115,7 @@ def test_live_detector_order_follows_the_registry(scorer):
 
 def test_train_only_detectors_are_absent(scorer):
     names = {d["name"] for d in scorer.score_transaction(NORMAL_TXN)["detectors"]}
-    assert names.isdisjoint({"mcd", "gmm", "kmeans", "pca_reconstruction"})
+    assert names.isdisjoint({"mcd", "gmm", "kmeans"})
 
 
 def test_explanation_block_has_the_documented_keys(scorer):

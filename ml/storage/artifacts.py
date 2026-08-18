@@ -20,6 +20,9 @@ from ml.features.engineer import FeatureArtifacts, ProfileStore
 
 MANIFEST_NAME = "manifest.json"
 DETECTOR_DIR = "detectors"
+# Named once: save_bundle deletes this path and load_bundle reads it, so two
+# spellings would mean a stale surrogate surviving a retrain that dropped it.
+SURROGATE_NAME = "surrogate_catboost.cbm"
 
 
 @dataclass
@@ -51,9 +54,13 @@ def save_bundle(bundle: ArtifactBundle, dest: str | Path) -> None:
             stale.unlink()
     detector_dir.mkdir(parents=True, exist_ok=True)
 
-    surrogate_path = dest / "surrogate_xgb.json"
-    if surrogate_path.exists():
-        surrogate_path.unlink()
+    # Globbed rather than matched on SURROGATE_NAME alone: a bundle written
+    # before the surrogate changed library carries the previous file, and
+    # deleting only today's name would leave that one behind as exactly the
+    # orphan this clearing exists to prevent.
+    for stale in dest.glob("surrogate_*"):
+        stale.unlink()
+    surrogate_path = dest / SURROGATE_NAME
 
     with open(dest / MANIFEST_NAME, "w", encoding="utf-8") as fh:
         json.dump(bundle.manifest, fh, indent=2, default=str)
@@ -85,11 +92,13 @@ def load_bundle(src: str | Path) -> ArtifactBundle:
     }
 
     surrogate = None
-    surrogate_path = src / "surrogate_xgb.json"
+    surrogate_path = src / SURROGATE_NAME
     if surrogate_path.exists():
-        from xgboost import XGBClassifier
+        # Imported here rather than at module scope: loading a bundle without a
+        # surrogate should not require the boosting library to be installed.
+        from catboost import CatBoostClassifier
 
-        surrogate = XGBClassifier()
+        surrogate = CatBoostClassifier()
         surrogate.load_model(str(surrogate_path))
 
     return ArtifactBundle(

@@ -885,6 +885,64 @@ button {
   border-color: rgba(245, 165, 36, 0.35);
 }
 
+/* The offer to fill an incomplete file. Amber, not red: it is a choice with a
+   cost, not a failure — and it is deliberately wordy, because the cost is the
+   part that matters. */
+.fill-offer {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid rgba(245, 165, 36, 0.4);
+  border-radius: var(--radius);
+  background: rgba(245, 165, 36, 0.07);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--ink-dim);
+  cursor: pointer;
+}
+
+.fill-offer input {
+  margin-top: 2px;
+  accent-color: var(--toward-low);
+  flex-shrink: 0;
+}
+
+.fill-offer .fill-cost {
+  display: block;
+  margin-top: 4px;
+  color: var(--ink-faint);
+}
+
+.filled-banner {
+  margin: 0 0 16px;
+  padding: 11px 14px;
+  border: 1px solid rgba(245, 165, 36, 0.4);
+  border-left-width: 3px;
+  border-radius: var(--radius);
+  background: rgba(245, 165, 36, 0.07);
+}
+
+.filled-banner p {
+  margin: 5px 0 0;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--ink-dim);
+}
+
+.filled-banner .num {
+  color: var(--toward-low);
+}
+
+/* A required column the file did not send. The upload cannot proceed without
+   it, so it reads as an error rather than as a note. */
+.chip[data-tone="missing"] {
+  color: var(--toward-high);
+  border-color: rgba(229, 72, 77, 0.45);
+  background: rgba(229, 72, 77, 0.08);
+}
+
 .progress-block {
   margin-top: 16px;
 }
@@ -1093,6 +1151,80 @@ button.batch-row {
 
 .batch-row[aria-expanded="true"] {
   background: var(--surface-hi);
+}
+
+/* ---------- validated as actual fraud ----------
+   A flagged row is a probability; a confirmed one is a finding. The palette
+   already spends amber-to-red on "toward anomaly", so confirmation cannot be
+   another red — it is marked by a solid rail and a filled verdict chip, which
+   read as settled rather than as louder. --toward-high is rgb(229, 72, 77). */
+
+.batch-row[data-confirmed="true"] {
+  background: rgba(229, 72, 77, 0.09);
+  box-shadow: inset 3px 0 0 var(--toward-high);
+}
+
+.batch-row[data-confirmed="true"]:hover {
+  background: rgba(229, 72, 77, 0.15);
+}
+
+.batch-row .verdict[data-confirmed="true"] {
+  color: var(--toward-high);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.batch-row .verdict[data-confirmed="true"] .tally {
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--toward-high);
+  opacity: 0.75;
+}
+
+.section-head .confirmed-note {
+  color: var(--toward-high);
+}
+
+.validate-block {
+  border-top: 1px solid var(--line);
+  padding-top: 14px;
+}
+
+.validate {
+  width: 100%;
+  padding: 9px 12px;
+  border-radius: var(--radius);
+  border: 1px solid var(--toward-high);
+  background: transparent;
+  color: var(--toward-high);
+  font-size: 13px;
+  font-weight: 600;
+  transition:
+    background 140ms ease,
+    color 140ms ease;
+}
+
+.validate:hover {
+  background: rgba(229, 72, 77, 0.16);
+}
+
+.validate[aria-pressed="true"] {
+  background: var(--toward-high);
+  border-color: var(--toward-high);
+  color: #2a0b0c;
+}
+
+.validate-note {
+  margin: 9px 0 0;
+  font-size: 12px;
+  color: var(--ink-dim);
+  line-height: 1.5;
+}
+
+.confirmed-word {
+  color: var(--toward-high);
+  font-weight: 650;
 }
 
 /* ---------- batch review drawer ----------

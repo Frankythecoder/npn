@@ -7,7 +7,12 @@ from ml.config import Config
 from ml.data.loader import load_raw
 from ml.detectors.isolation_forest import IsolationForestDetector
 from ml.features.engineer import build_training_frame
-from ml.storage.artifacts import ArtifactBundle, load_bundle, save_bundle
+from ml.storage.artifacts import (
+    SURROGATE_NAME,
+    ArtifactBundle,
+    load_bundle,
+    save_bundle,
+)
 
 
 @pytest.fixture(scope="module")
@@ -102,11 +107,13 @@ def test_save_bundle_clears_stale_detector_pickles_and_surrogate(tmp_path, bundl
     written once per version. A retrain with a shrunk detector roster, or
     one that drops the surrogate, must not leave orphan files behind for
     load_bundle's glob to pick back up alongside the new ones."""
-    from xgboost import XGBClassifier
+    from catboost import CatBoostClassifier
 
     Xs = pd.DataFrame({"a": [0.0, 1.0, 2.0, 3.0], "b": [1.0, 0.0, 1.0, 0.0]})
     ys = np.array([0, 1, 0, 1])
-    surrogate = XGBClassifier(n_estimators=5, max_depth=2)
+    surrogate = CatBoostClassifier(
+        iterations=5, depth=2, verbose=False, allow_writing_files=False
+    )
     surrogate.fit(Xs, ys)
 
     first = ArtifactBundle(
@@ -124,7 +131,7 @@ def test_save_bundle_clears_stale_detector_pickles_and_surrogate(tmp_path, bundl
     save_bundle(first, tmp_path)
     assert (tmp_path / "detectors" / "isolation_forest.pkl").exists()
     assert (tmp_path / "detectors" / "extra_detector.pkl").exists()
-    assert (tmp_path / "surrogate_xgb.json").exists()
+    assert (tmp_path / SURROGATE_NAME).exists()
 
     second = ArtifactBundle(
         manifest={"version": "second"},
@@ -141,10 +148,32 @@ def test_save_bundle_clears_stale_detector_pickles_and_surrogate(tmp_path, bundl
     assert remaining == ["isolation_forest.pkl"], (
         "extra_detector.pkl is a stale orphan from the first save"
     )
-    assert not (tmp_path / "surrogate_xgb.json").exists(), (
-        "surrogate_xgb.json is a stale orphan from the first save"
+    assert not (tmp_path / SURROGATE_NAME).exists(), (
+        f"{SURROGATE_NAME} is a stale orphan from the first save"
     )
 
     loaded = load_bundle(tmp_path)
     assert set(loaded.detectors) == {"isolation_forest"}
     assert loaded.surrogate is None
+
+
+def test_a_surrogate_from_a_previous_library_is_cleared_too(tmp_path, bundle):
+    """A bundle written before the surrogate changed library carries the old
+    file. Leaving it behind would be the orphan save_bundle exists to prevent."""
+    legacy = tmp_path / "surrogate_xgb.json"
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    legacy.write_text("{}", encoding="utf-8")
+
+    save_bundle(
+        ArtifactBundle(
+            manifest={"version": "v"},
+            scalers=bundle.scalers,
+            feature_artifacts=bundle.feature_artifacts,
+            profile_store=bundle.profile_store,
+            detectors={"isolation_forest": bundle.detectors["isolation_forest"]},
+            surrogate=None,
+            explainer_state=bundle.explainer_state,
+        ),
+        tmp_path,
+    )
+    assert not legacy.exists(), "the previous library's surrogate survived a retrain"

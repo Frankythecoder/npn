@@ -7,7 +7,7 @@ from ml.pipeline.train import format_report, run_training
 from ml.storage.artifacts import load_bundle
 
 LIVE = ["isolation_forest", "lof", "one_class_svm", "dbscan"]
-TRAIN_ONLY = ["mcd", "gmm", "kmeans", "pca_reconstruction"]
+TRAIN_ONLY = ["mcd", "gmm", "kmeans"]
 
 
 @pytest.fixture(scope="module")
@@ -18,7 +18,7 @@ def trained(tmp_path_factory):
     return report, dest
 
 
-def test_spec_6_1_all_eight_detectors_flag_126_rows(trained):
+def test_spec_6_1_all_seven_detectors_flag_126_rows(trained):
     report, _ = trained
     assert sorted(report.rate_table) == sorted(LIVE + TRAIN_ONLY)
     for name in LIVE + TRAIN_ONLY:

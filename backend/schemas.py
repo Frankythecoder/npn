@@ -57,3 +57,7 @@ class CsvBatchIn(BaseModel):
     # that file rather than of the long-running service. Empty means an unshared
     # store for this request alone.
     upload_id: str = Field(default="", max_length=64)
+    # Opt in to filling absent scoring columns from the training distribution.
+    # Defaults to off: an incomplete upload is refused unless the caller has
+    # been shown what filling costs and asked for it anyway.
+    fill_missing: bool = Field(default=False)

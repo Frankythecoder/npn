@@ -1,4 +1,4 @@
-"""Spec 14: Protocol conformance, parametrised across all eight detectors."""
+"""Spec 14: Protocol conformance, parametrised across all seven detectors."""
 import numpy as np
 import pandas as pd
 import pytest

@@ -2,9 +2,9 @@ from ml.config import Config
 from ml.detectors.registry import DETECTOR_ORDER, build_detectors, live_detectors
 
 
-def test_registry_builds_eight_detectors():
+def test_registry_builds_seven_detectors():
     detectors = build_detectors(Config.load())
-    assert len(detectors) == 8
+    assert len(detectors) == 7
     assert [d.name for d in detectors] == DETECTOR_ORDER
 
 

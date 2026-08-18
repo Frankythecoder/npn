@@ -1,4 +1,4 @@
-"""XGBoost surrogate trained on the ensemble's decision.
+"""CatBoost surrogate trained on the ensemble's decision.
 
 The surrogate explains; it never decides. Its purpose is to make a single
 transaction explainable via SHAP without attributing across four detectors.
@@ -16,7 +16,37 @@ import numpy as np
 import pandas as pd
 from sklearn.metrics import roc_auc_score
 from sklearn.model_selection import train_test_split
-from xgboost import XGBClassifier
+from catboost import CatBoostClassifier
+
+
+def _params(scale_pos_weight: float, random_state: int) -> dict:
+    """CatBoost's spelling of the surrogate's hyperparameters.
+
+    Deliberately the same shape as the gradient boosting it replaces, so the
+    surrogate's fidelity is comparable across the swap rather than confounded
+    by a retune: iterations/depth/learning_rate are n_estimators/max_depth/
+    learning_rate, and rsm is colsample_bytree. `subsample` only takes effect
+    under a bootstrap that samples rows, hence Bernoulli -- left on CatBoost's
+    default the parameter would be silently ignored.
+
+    verbose and allow_writing_files are not tuning. CatBoost prints a line per
+    iteration and drops a `catboost_info/` directory into the working directory
+    unless told otherwise; a training run should do neither.
+    """
+    return {
+        "iterations": 300,
+        "depth": 4,
+        "learning_rate": 0.1,
+        "subsample": 0.9,
+        "bootstrap_type": "Bernoulli",
+        "rsm": 0.9,
+        "scale_pos_weight": scale_pos_weight,
+        "eval_metric": "Logloss",
+        "random_seed": random_state,
+        "thread_count": -1,
+        "verbose": False,
+        "allow_writing_files": False,
+    }
 
 
 @dataclass
@@ -48,17 +78,7 @@ def train_surrogate(
         X, y, test_size=test_size, random_state=random_state, stratify=y
     )
 
-    model = XGBClassifier(
-        n_estimators=300,
-        max_depth=4,
-        learning_rate=0.1,
-        subsample=0.9,
-        colsample_bytree=0.9,
-        scale_pos_weight=scale_pos_weight,
-        eval_metric="logloss",
-        random_state=random_state,
-        n_jobs=-1,
-    )
+    model = CatBoostClassifier(**_params(scale_pos_weight, random_state))
     model.fit(X_train, y_train)
 
     probabilities = model.predict_proba(X_test)[:, 1]
@@ -66,7 +86,7 @@ def train_surrogate(
     agreement = float((model.predict(X_test) == y_test).mean())
 
     # Refit on the full dataset so the shipped model has seen every row.
-    final = XGBClassifier(**model.get_params())
+    final = CatBoostClassifier(**model.get_params())
     final.fit(X, y)
 
     return SurrogateResult(

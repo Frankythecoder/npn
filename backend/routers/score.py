@@ -9,7 +9,7 @@ from fastapi import APIRouter, HTTPException, Query
 
 from backend import deps
 from backend.config import Settings
-from backend.csvingest import MissingCrucialColumns, normalise_rows
+from backend.csvingest import UnusableUpload, normalise_rows
 from backend.schemas import BatchIn, BatchOut, CsvBatchIn, TransactionIn
 
 router = APIRouter(tags=["scoring"])
@@ -53,10 +53,15 @@ def score_csv(payload: CsvBatchIn) -> dict:
         accepted, rejected = normalise_rows(
             payload.columns,
             payload.rows,
-            deps.get_csv_defaults(),
             payload.start_row,
+            # Resolved only when asked for: deriving the table touches the
+            # bundle, and a complete upload should never pay for it.
+            defaults=deps.get_csv_defaults() if payload.fill_missing else None,
+            # Shared across this upload's chunks, so a transaction repeated
+            # after a chunk boundary is still caught.
+            seen_ids=deps.get_batch_seen_ids(payload.upload_id),
         )
-    except MissingCrucialColumns as exc:
+    except UnusableUpload as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     scorer = deps.get_scorer()

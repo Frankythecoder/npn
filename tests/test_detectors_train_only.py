@@ -9,7 +9,6 @@ from ml.data.loader import load_raw
 from ml.detectors.gmm import GMMDetector
 from ml.detectors.kmeans import KMeansDetector
 from ml.detectors.mcd import MCDDetector
-from ml.detectors.pca_reconstruction import PCAReconstructionDetector
 from ml.features.engineer import CONTINUOUS_COLUMNS, build_training_frame
 
 
@@ -30,8 +29,8 @@ def unscaled():
     return X
 
 
-def test_all_four_are_marked_train_only():
-    for cls in (MCDDetector, GMMDetector, KMeansDetector, PCAReconstructionDetector):
+def test_all_three_are_marked_train_only():
+    for cls in (MCDDetector, GMMDetector, KMeansDetector):
         assert cls.live_scorable is False, cls.__name__
 
 
@@ -69,17 +68,7 @@ def test_kmeans_flags_the_rate(frames):
     assert (det.score(full) >= 0).all()
 
 
-def test_pca_reconstruction_flags_the_rate(frames):
-    full, _ = frames
-    det = PCAReconstructionDetector(
-        contamination=0.05, n_components=0.95, random_state=42
-    ).fit(full)
-    assert det.fit_flags_.sum() == 126
-    assert (det.score(full) >= 0).all()
-    assert det._model.n_components_ < full.shape[1]
-
-
-def test_all_four_score_a_single_row(frames):
+def test_all_three_score_a_single_row(frames):
     full, cont = frames
     pairs = [
         (MCDDetector(contamination=0.05, random_state=42), cont),
@@ -95,12 +84,6 @@ def test_all_four_score_a_single_row(frames):
         (
             KMeansDetector(
                 contamination=0.05, n_clusters=8, n_init=10, random_state=42
-            ),
-            full,
-        ),
-        (
-            PCAReconstructionDetector(
-                contamination=0.05, n_components=0.95, random_state=42
             ),
             full,
         ),
@@ -129,12 +112,6 @@ def test_all_four_score_a_single_row(frames):
         (
             lambda: KMeansDetector(
                 contamination=0.05, n_clusters=8, n_init=10, random_state=42
-            ),
-            "full",
-        ),
-        (
-            lambda: PCAReconstructionDetector(
-                contamination=0.05, n_components=0.95, random_state=42
             ),
             "full",
         ),

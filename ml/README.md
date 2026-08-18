@@ -6,7 +6,7 @@ Anomaly detection over the transaction dataset.
 
     python -m ml.pipeline.train
 
-Fits eight detectors, builds the ensemble and the surrogate, prints the
+Fits seven detectors, builds the ensemble and the surrogate, prints the
 validation tables, and writes the artifact bundle to the directory named by
 `storage.local_dir` in `config.yaml`.
 

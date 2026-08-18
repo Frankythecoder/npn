@@ -109,22 +109,47 @@ def test_a_file_with_no_crucial_column_is_a_422(client):
     assert "TransactionAmount" in response.json()["detail"]
 
 
-def test_one_crucial_column_is_enough_and_the_rest_are_filled(client):
+def test_an_incomplete_file_is_a_422_naming_what_is_missing(client):
+    """Nothing is substituted, so a file with a gap cannot be scored at all."""
     response = post(client, ["TransactionAmount"], [["4800.00"]])
+    assert response.status_code == 422
+    detail = response.json()["detail"]
+    for column in ("AccountBalance", "Channel", "CustomerOccupation", "Location"):
+        assert column in detail, column
+    assert "nothing is substituted" in detail.lower()
+
+
+# Every scoring column, with the identity three deliberately left out.
+REQUIRED_ONLY = [
+    "TransactionAmount",
+    "AccountBalance",
+    "CustomerAge",
+    "TransactionDuration",
+    "LoginAttempts",
+    "TransactionType",
+    "Channel",
+    "CustomerOccupation",
+    "Location",
+]
+REQUIRED_ONLY_ROW = ["4800.00", "5000", "40", "90", "1", "Debit", "ATM", "Student", "Houston"]
+
+
+def test_a_file_without_identity_columns_still_scores(client):
+    """Identity is synthesised rather than filled, so its absence is survivable
+    where a missing scoring column is not."""
+    response = post(client, REQUIRED_ONLY, [REQUIRED_ONLY_ROW])
     assert response.status_code == 200
-    body = response.json()
-    assert len(body["results"]) == 1
-    joined = " ".join(body["results"][0]["warnings"])
-    assert "AccountBalance missing from the file" in joined
+    assert len(response.json()["results"]) == 1
 
 
-def test_fill_warnings_join_the_engineered_warnings(client):
-    """A synthetic account must still produce transform_one's unseen-account note."""
-    warnings = post(client, ["TransactionAmount"], [["4800.00"]]).json()["results"][0][
+def test_a_synthesised_account_still_produces_the_unseen_account_note(client):
+    """transform_one's own warning must survive; it is how the operator learns
+    the row's history features had nothing to work from."""
+    warnings = post(client, REQUIRED_ONLY, [REQUIRED_ONLY_ROW]).json()["results"][0][
         "warnings"
     ]
     assert any("unseen account" in w for w in warnings)
-    assert any("missing from the file" in w for w in warnings)
+    assert not any("filled with the training default" in w for w in warnings)
 
 
 def test_a_null_cell_rejects_only_that_row(client):
@@ -193,21 +218,37 @@ def test_an_upload_does_not_see_the_training_stores_history(client):
 
 def test_an_upload_leaves_the_live_scorers_store_untouched(client):
     before = deps.get_scorer().profiles
-    post(client, FULL_COLUMNS, [FULL_ROW] * 3, upload_id="u1")
+    post(
+        client,
+        FULL_COLUMNS,
+        [_row(TransactionID=f"TX00000{i}") for i in (1, 2, 3)],
+        upload_id="u1",
+    )
     assert deps.get_scorer().profiles is before
     # A preset fired after an upload must behave exactly as it did before one.
     assert client.post("/demo/inject", json={"preset": "normal"}).status_code == 200
 
 
+# Distinct transaction ids throughout: these are two transactions on ONE
+# account, which is what accumulating history means. Repeating a single id
+# would be a duplicate, and is now dropped as one.
+
+
 def test_rows_within_one_chunk_accumulate_history(client):
-    body = post(client, FULL_COLUMNS, [FULL_ROW, FULL_ROW]).json()
+    body = post(
+        client, FULL_COLUMNS, [FULL_ROW, _row(TransactionID="TX000002")]
+    ).json()
     assert [volume(body, 0), volume(body, 1)] == [1.0, 2.0]
 
 
 def test_chunks_of_one_upload_share_history(client):
     first = post(client, FULL_COLUMNS, [FULL_ROW], upload_id="u1").json()
     second = post(
-        client, FULL_COLUMNS, [FULL_ROW], upload_id="u1", start_row=502
+        client,
+        FULL_COLUMNS,
+        [_row(TransactionID="TX000002")],
+        upload_id="u1",
+        start_row=502,
     ).json()
     assert volume(first) == 1.0
     assert volume(second) == 2.0
@@ -246,3 +287,88 @@ def test_the_existing_score_endpoint_still_forbids_unknown_fields(client):
         "MerchantID": "M015",
     }
     assert client.post("/score", json=payload).status_code == 422
+
+
+# ---------- the opt-in fill path ----------
+
+
+def test_fill_missing_accepts_the_same_file_the_default_refuses(client):
+    """The opt-in path, end to end."""
+    refused = post(client, ["TransactionAmount"], [["4800.00"]])
+    assert refused.status_code == 422
+
+    filled = post(client, ["TransactionAmount"], [["4800.00"]], fill_missing=True)
+    assert filled.status_code == 200
+    body = filled.json()
+    assert len(body["results"]) == 1
+    joined = " ".join(body["results"][0]["warnings"])
+    assert "AccountBalance missing from the file" in joined
+    assert "filled with the training default" in joined
+
+
+def test_fill_missing_is_off_unless_asked_for(client):
+    """A complete file must not acquire fill warnings just because the flag
+    exists, and the default must stay strict."""
+    body = post(client, FULL_COLUMNS, [FULL_ROW]).json()
+    assert not any(
+        "filled with the training default" in w
+        for w in body["results"][0]["warnings"]
+    )
+
+
+def test_fill_missing_cannot_rescue_a_non_transaction_file(client):
+    response = post(
+        client, ["IP Address", "MerchantID"], [["1.2.3.4", "M01"]], fill_missing=True
+    )
+    assert response.status_code == 422
+
+
+# ---------- validation and duplicate removal, end to end ----------
+
+
+def _row(**overrides):
+    values = dict(zip(FULL_COLUMNS, FULL_ROW))
+    values.update(overrides)
+    return [values[c] for c in FULL_COLUMNS]
+
+
+def test_an_invalid_row_is_dropped_and_the_valid_one_still_scores(client):
+    body = post(client, FULL_COLUMNS, [_row(), _row(CustomerAge="900")]).json()
+    assert len(body["results"]) == 1
+    assert len(body["rejected"]) == 1
+    assert "CustomerAge" in body["rejected"][0]["reason"]
+
+
+def test_an_unknown_channel_never_reaches_the_model(client):
+    body = post(client, FULL_COLUMNS, [_row(Channel="Pigeon")]).json()
+    assert body["results"] == []
+    assert "Channel" in body["rejected"][0]["reason"]
+
+
+def test_an_anomalous_but_valid_row_is_still_scored(client):
+    """The validator must not delete the account-drain case."""
+    body = post(
+        client, FULL_COLUMNS, [_row(TransactionAmount="9000", AccountBalance="100")]
+    ).json()
+    assert len(body["results"]) == 1
+    assert body["rejected"] == []
+
+
+def test_duplicates_are_dropped_across_chunks_of_one_upload(client):
+    """Chunks share an upload_id, so the second copy is caught even though it
+    arrives in a separate request."""
+    first = post(
+        client, FULL_COLUMNS, [_row()], upload_id="u1", start_row=2
+    ).json()
+    second = post(
+        client, FULL_COLUMNS, [_row()], upload_id="u1", start_row=502
+    ).json()
+    assert len(first["results"]) == 1
+    assert second["results"] == []
+    assert "duplicate" in second["rejected"][0]["reason"]
+
+
+def test_a_new_upload_starts_from_a_clean_id_set(client):
+    post(client, FULL_COLUMNS, [_row()], upload_id="u1")
+    body = post(client, FULL_COLUMNS, [_row()], upload_id="u2").json()
+    assert len(body["results"]) == 1, "a new upload inherited the previous one's ids"

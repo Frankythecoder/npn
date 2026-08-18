@@ -10,9 +10,11 @@ import {
 /**
  * Upload a CSV of transactions instead of filling fields one at a time.
  *
- * The file is parsed and checked in the browser before anything is sent, so a
- * file missing every crucial column is refused without a round trip, and the
- * operator can see what will be filled in before committing to the run.
+ * The file is parsed and checked in the browser before anything is sent, so an
+ * incomplete file is refused without a round trip. The column breakdown is shown
+ * either way — a rejected file is exactly when the operator most needs to see
+ * which columns are missing, so the report renders alongside the error and only
+ * the Score button is withheld.
  *
  * Scoring is chunked. The service runs one uvicorn worker with one instance on
  * purpose — the profile store is mutated in process — so a single request
@@ -27,6 +29,9 @@ export default function CsvPanel({ onBatch, onBusyChange }) {
   const [error, setError] = useState(null);
   const [progress, setProgress] = useState(null);
   const [dragging, setDragging] = useState(false);
+  // Opting an incomplete file into having its gap filled. Reset by reset(), so
+  // it can never carry over from one file to the next.
+  const [fillMissing, setFillMissing] = useState(false);
 
   const inputRef = useRef(null);
   const cancelRef = useRef(false);
@@ -36,6 +41,7 @@ export default function CsvPanel({ onBatch, onBusyChange }) {
     setReport(null);
     setError(null);
     setProgress(null);
+    setFillMissing(false);
   }
 
   async function accept(chosen) {
@@ -58,14 +64,21 @@ export default function CsvPanel({ onBatch, onBusyChange }) {
       return;
     }
 
+    // Reported whether or not it passes: the breakdown is the explanation.
     const classified = classifyColumns(result.columns);
-    if (!classified.ok) {
+    setReport(classified);
+
+    if (!classified.ok && !classified.fillable) {
       setError(rejectionMessage(result.columns));
+      // parsed stays null, so no Score button appears for a file that cannot
+      // be scored at all.
       return;
     }
 
+    // A fillable file is parsed but not yet scoreable: the Score button stays
+    // hidden until the operator ticks the box, so filling is never the path of
+    // least resistance.
     setParsed(result);
-    setReport(classified);
   }
 
   function onDrop(event) {
@@ -95,7 +108,13 @@ export default function CsvPanel({ onBatch, onBusyChange }) {
 
         const chunk = parsed.rows.slice(start, start + CHUNK_SIZE);
         // +2: the header occupies line 1, so the first data row is line 2.
-        const body = await scoreCsv(parsed.columns, chunk, start + 2, uploadId);
+        const body = await scoreCsv(
+          parsed.columns,
+          chunk,
+          start + 2,
+          uploadId,
+          fillMissing,
+        );
 
         results.push(...body.results);
         rejected.push(...body.rejected);
@@ -116,6 +135,9 @@ export default function CsvPanel({ onBatch, onBusyChange }) {
       rejected,
       cancelled: cancelRef.current,
       scanned: results.length + rejected.length,
+      // Carried so the results view can say the batch was filled. A verdict on
+      // a filled row must not be read as a verdict on the row alone.
+      filled: fillMissing ? report.missing : [],
     });
   }
 
@@ -150,18 +172,23 @@ export default function CsvPanel({ onBatch, onBusyChange }) {
           Choose a CSV file
         </button>
         <p className="why" style={{ marginTop: 10, marginBottom: 0 }}>
-          or drop one here. Any subset of <span className="num">original.csv</span>
-          's columns works — anything missing is filled from the training data.
+          or drop one here. Every scoring column must be present, under its own
+          name or a recognised synonym — nothing is substituted from the
+          training data.
         </p>
       </div>
 
       {error && <div className="error">{error}</div>}
 
-      {report && parsed && (
+      {report && (
         <div className="col-report">
           <div className="col-report-head">
             <span className="fname">{file?.name}</span>
-            <span className="num">{parsed.rows.length.toLocaleString()} rows</span>
+            {parsed && (
+              <span className="num">
+                {parsed.rows.length.toLocaleString()} rows
+              </span>
+            )}
           </div>
 
           <ColumnGroup
@@ -179,10 +206,37 @@ export default function CsvPanel({ onBatch, onBusyChange }) {
               tone="ok"
             />
           )}
-          {report.filled.length > 0 && (
+          {report.missing.length > 0 && (
             <ColumnGroup
-              label={`Filled from training data (${report.filled.length})`}
-              columns={report.filled}
+              label={`Missing — required (${report.missing.length})`}
+              columns={report.missing}
+              tone="missing"
+            />
+          )}
+          {report.fillable && (
+            <label className="fill-offer">
+              <input
+                type="checkbox"
+                checked={fillMissing}
+                onChange={(e) => setFillMissing(e.target.checked)}
+              />
+              <span>
+                Score anyway, filling{" "}
+                <span className="num">{report.missing.length}</span>{" "}
+                {report.missing.length === 1 ? "column" : "columns"} from the
+                training data.{" "}
+                <span className="fill-cost">
+                  Measured on the training set, substituting a column group moves
+                  4–10% of verdicts — those rows are judged partly on training
+                  values, not only on what the file sent.
+                </span>
+              </span>
+            </label>
+          )}
+          {report.synthesised.length > 0 && (
+            <ColumnGroup
+              label={`Scored as a new account (${report.synthesised.length})`}
+              columns={report.synthesised}
               tone="fill"
             />
           )}
@@ -217,7 +271,7 @@ export default function CsvPanel({ onBatch, onBusyChange }) {
         </div>
       )}
 
-      {parsed && (
+      {parsed && (report.ok || fillMissing) && (
         <button
           type="button"
           className="inject-btn"

@@ -22,7 +22,7 @@ export const CRUCIAL_COLUMNS = [
   "LoginAttempts",
 ];
 
-/** Every column the scorer reads. Anything absent is filled server-side. */
+/** Every column the scorer reads. */
 export const SCORING_COLUMNS = [
   ...CRUCIAL_COLUMNS,
   "TransactionType",
@@ -33,6 +33,26 @@ export const SCORING_COLUMNS = [
   "DeviceID",
   "TransactionDate",
 ];
+
+/**
+ * Columns the file must supply itself, under their own name or a synonym.
+ * Mirrors REQUIRED_COLUMNS in backend/csvingest.py — nothing here has a
+ * server-side fallback.
+ */
+export const REQUIRED_COLUMNS = [
+  ...CRUCIAL_COLUMNS,
+  "TransactionType",
+  "Channel",
+  "CustomerOccupation",
+  "Location",
+];
+
+/**
+ * Identity columns. Absent, these are synthesised rather than filled from
+ * training data — the row is scored as a new account, which the backend says
+ * in the row's warnings.
+ */
+export const IDENTITY_COLUMNS = ["AccountID", "DeviceID", "TransactionDate"];
 
 /** Recognised columns of original.csv that the model has never read. */
 export const IGNORED_COLUMNS = [
@@ -243,13 +263,16 @@ export function resolveColumns(columns) {
 }
 
 /**
- * Sort a header into what will be used, filled, and ignored.
+ * Sort a header into what will be used, what is missing, and what is ignored.
  *
  * Synonyms are resolved first, so a column the backend will read under another
  * name is reported as used rather than unrecognised. `matched` lists those
  * renames so the panel can show what was assumed.
  *
- * `ok` is the file-level gate: at least one crucial column present.
+ * `ok` is the file-level gate, and it is now completeness: nothing is
+ * substituted server-side for a column the file did not send, so a file with a
+ * gap cannot be scored at all. Reporting that here means the user learns it
+ * before the upload rather than from a 422 afterwards.
  */
 export function classifyColumns(columns) {
   const { resolved, matches } = resolveColumns(columns);
@@ -257,11 +280,15 @@ export function classifyColumns(columns) {
   const crucial = CRUCIAL_COLUMNS.filter((c) => seen.has(c));
   const renamed = new Set(matches.map((m) => m.from));
 
+  const missing = REQUIRED_COLUMNS.filter((c) => !seen.has(c));
+  const synthesised = IDENTITY_COLUMNS.filter((c) => !seen.has(c));
+
   return {
     crucial,
     matched: matches,
+    missing,
+    synthesised,
     supplied: SCORING_COLUMNS.filter((c) => seen.has(c)),
-    filled: SCORING_COLUMNS.filter((c) => !seen.has(c)),
     ignored: columns.filter(
       (c) => IGNORED_COLUMNS.includes(c) && !renamed.has(c),
     ),
@@ -271,15 +298,30 @@ export function classifyColumns(columns) {
         !SCORING_COLUMNS.includes(c) &&
         !IGNORED_COLUMNS.includes(c),
     ),
-    ok: crucial.length > 0,
+    ok: crucial.length > 0 && missing.length === 0,
+    // Incomplete, but enough of a transaction file that the gap could be
+    // filled if the operator asks. A file failing the crucial gate is not
+    // offered the choice -- there would be nothing real left to score.
+    fillable: crucial.length > 0 && missing.length > 0,
   };
 }
 
 /** The message shown when the crucial-column gate rejects a file. */
 export function rejectionMessage(columns) {
-  const found = columns.length ? columns.join(", ") : "no columns";
+  const { crucial, missing } = classifyColumns(columns);
+
+  if (crucial.length === 0) {
+    const found = columns.length ? columns.join(", ") : "no columns";
+    return (
+      `This file has none of the required columns. At least one of ` +
+      `${CRUCIAL_COLUMNS.join(", ")} must be present. Found: ${found}.`
+    );
+  }
+
+  // Name the gap rather than the rule: the user can act on a column list.
   return (
-    `This file has none of the required columns. At least one of ` +
-    `${CRUCIAL_COLUMNS.join(", ")} must be present. Found: ${found}.`
+    `This file is missing ${missing.join(", ")}. Every scoring column must be ` +
+    `supplied, under its own name or a recognised synonym — nothing is ` +
+    `substituted from the training data.`
   );
 }

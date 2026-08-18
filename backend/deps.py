@@ -17,10 +17,15 @@ from ml.storage.artifacts import load_bundle
 
 _scorer: Scorer | None = None
 _log: TransactionLog | None = None
+# Derived from the bundle on first use, and only when an upload asks to be
+# filled. Cleared whenever the scorer is replaced.
 _csv_defaults: dict | None = None
 # One slot, not a cache: only the upload currently being received needs a store,
 # and a new upload replaces the previous one rather than accumulating.
 _batch_profiles: tuple[str, ProfileStore] | None = None
+# The transaction ids already accepted from the upload in flight. Same one-slot
+# discipline as the profile store above, and cleared alongside it.
+_batch_seen_ids: tuple[str, set[str]] | None = None
 
 
 def startup(settings: Settings) -> None:
@@ -32,11 +37,12 @@ def startup(settings: Settings) -> None:
 
 
 def shutdown() -> None:
-    global _scorer, _log, _csv_defaults, _batch_profiles
+    global _scorer, _log, _csv_defaults, _batch_profiles, _batch_seen_ids
     _scorer = None
     _log = None
     _csv_defaults = None
     _batch_profiles = None
+    _batch_seen_ids = None
 
 
 def is_loaded() -> bool:
@@ -56,10 +62,10 @@ def get_log() -> TransactionLog:
 
 
 def get_csv_defaults() -> dict:
-    """Fill values for CSV columns an upload did not supply.
+    """Fill values for columns an upload asked to have filled.
 
     Derived from the loaded bundle on first use rather than at startup, so a
-    deployment that never receives an upload never pays for it.
+    deployment whose uploads are all complete never pays for it.
     """
     global _csv_defaults
     if _csv_defaults is None:
@@ -91,10 +97,27 @@ def get_batch_profiles(upload_id: str) -> ProfileStore:
 
 def override(scorer: Any, log: Any) -> None:
     """Inject test doubles. Used by the test suite only."""
-    global _scorer, _log, _csv_defaults, _batch_profiles
+    global _scorer, _log, _csv_defaults, _batch_profiles, _batch_seen_ids
     _scorer = scorer
     _log = log
     # Defaults are derived from the scorer's bundle, so a new scorer must not
     # inherit the previous one's cached values.
     _csv_defaults = None
     _batch_profiles = None
+    _batch_seen_ids = None
+
+
+def get_batch_seen_ids(upload_id: str) -> set[str]:
+    """Transaction ids already accepted from one uploaded file.
+
+    Chunks of one upload share a set, so a transaction repeated across a chunk
+    boundary is caught -- deduping within a 200-row chunk alone would miss most
+    duplicates in a file of any size. An empty id gets an unshared set rather
+    than colliding with whatever ran last, and a new upload starts clean.
+    """
+    global _batch_seen_ids
+    if not upload_id:
+        return set()
+    if _batch_seen_ids is None or _batch_seen_ids[0] != upload_id:
+        _batch_seen_ids = (upload_id, set())
+    return _batch_seen_ids[1]

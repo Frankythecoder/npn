@@ -1,6 +1,7 @@
 """Offline training run: fit everything, report, and write the artifact bundle."""
 from __future__ import annotations
 
+import argparse
 import hashlib
 import itertools
 import json
@@ -10,9 +11,9 @@ from pathlib import Path
 
 import numpy
 import pandas as pd
+import catboost
 import shap
 import sklearn
-import xgboost
 from sklearn.preprocessing import RobustScaler, StandardScaler
 
 from ml.config import Config
@@ -38,7 +39,13 @@ class TrainingReport:
     surrogate_agreement: float
     dbscan_native_noise_rate: float
     n_rows: int
+    # Rows per split, and each detector's flag rate on each -- see
+    # _evaluate_split for what these do and do not measure.
+    split_sizes: dict[str, int] = field(default_factory=dict)
+    split_rates: dict[str, dict[str, float]] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
+    # Paths of the diagnostic figures, when the run was asked for them.
+    figures: list[Path] = field(default_factory=list)
 
 
 def _build_frames(X: pd.DataFrame, continuous_columns: list[str]) -> tuple[dict, dict]:
@@ -58,13 +65,62 @@ def _build_frames(X: pd.DataFrame, continuous_columns: list[str]) -> tuple[dict,
     return scalers, frames
 
 
+def _split_indices(
+    n: int, fractions: dict[str, float], random_state: int
+) -> dict[str, numpy.ndarray]:
+    """Disjoint train/validation/test row indices.
+
+    A plain shuffle, not a stratified one: stratification needs a label, and
+    the whole point of this dataset is that there is not one. Test takes the
+    remainder rather than its own rounded count, so the three always partition
+    every row exactly.
+    """
+    rng = numpy.random.default_rng(random_state)
+    order = rng.permutation(n)
+    n_train = int(round(n * fractions["train"]))
+    n_validation = int(round(n * fractions["validation"]))
+    return {
+        "train": numpy.sort(order[:n_train]),
+        "validation": numpy.sort(order[n_train : n_train + n_validation]),
+        "test": numpy.sort(order[n_train + n_validation :]),
+    }
+
+
+def _evaluate_split(
+    cfg: Config, frames: dict, splits: dict[str, numpy.ndarray]
+) -> dict[str, dict[str, float]]:
+    """Fit a throwaway roster on train alone and flag each split with it.
+
+    This is a generalisation check, not an accuracy one. Each detector freezes
+    its threshold at the configured contamination on the training rows; if that
+    same threshold flags roughly the same share of validation and test rows,
+    the cut describes the data rather than the sample. A rate that collapses or
+    explodes on held-out rows is the signal to retune.
+
+    The detectors fitted here are discarded. The ones that ship are refitted on
+    every row by the caller, so holding 30% back costs the bundle nothing --
+    the same trade ml/explain/surrogate.py makes for its held-out AUC.
+    """
+    rates: dict[str, dict[str, float]] = {}
+
+    for detector in build_detectors(cfg):
+        frame = frames[detector.scaler]
+        detector.fit(frame.iloc[splits["train"]])
+        rates[detector.name] = {
+            part: float(detector.flag(frame.iloc[index]).mean())
+            for part, index in splits.items()
+        }
+
+    return rates
+
+
 def _library_versions() -> dict[str, str]:
     """Pinned dependency versions, so an unpickling break has something to
     compare the bundle against (spec 9: pinning exists precisely to stop a
     scikit-learn minor-version drift from breaking unpickling)."""
     return {
         "sklearn": sklearn.__version__,
-        "xgboost": xgboost.__version__,
+        "catboost": catboost.__version__,
         "numpy": numpy.__version__,
         "pandas": pd.__version__,
         "shap": shap.__version__,
@@ -78,13 +134,32 @@ def _config_hash(cfg: Config) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
-def run_training(cfg: Config, dest: str | Path | None = None) -> TrainingReport:
-    """Fit every detector, build the ensemble and surrogate, and save the bundle."""
+def run_training(
+    cfg: Config,
+    dest: str | Path | None = None,
+    figures_dir: str | Path | None = None,
+) -> TrainingReport:
+    """Fit every detector, build the ensemble and surrogate, and save the bundle.
+
+    `figures_dir` is opt-in: left as None -- which is what every existing caller
+    passes -- not a single plot is drawn and the run costs exactly what it did
+    before. Given a directory, ml.viz renders the diagnostic set into it after
+    the bundle is written, so a figure failure can never cost a trained bundle.
+    """
     dest = Path(dest) if dest is not None else Path(cfg.get("storage.local_dir"))
 
     raw = load_raw(cfg.get("data.csv_path"))
     X, feature_artifacts, profile_store = build_training_frame(raw)
     scalers, frames = _build_frames(X, feature_artifacts.continuous_columns)
+
+    # Split and evaluate BEFORE the fit that ships: these detectors see only
+    # the training rows, so the flag rates below are earned on data they never
+    # saw. The roster is then discarded.
+    splits = _split_indices(
+        len(X), cfg.get("data.split"), cfg.get("detectors.random_state")
+    )
+    split_rates = _evaluate_split(cfg, frames, splits)
+    split_sizes = {part: int(len(index)) for part, index in splits.items()}
 
     detectors = build_detectors(cfg)
     for detector in detectors:
@@ -142,6 +217,8 @@ def run_training(cfg: Config, dest: str | Path | None = None) -> TrainingReport:
         dbscan_native_noise_rate=float(dbscan.native_noise_rate_),
         n_rows=len(X),
         warnings=warnings,
+        split_sizes=split_sizes,
+        split_rates=split_rates,
     )
 
     manifest = {
@@ -168,6 +245,8 @@ def run_training(cfg: Config, dest: str | Path | None = None) -> TrainingReport:
         "surrogate_auc": surrogate.auc,
         "surrogate_agreement": surrogate.agreement,
         "dbscan_native_noise_rate": report.dbscan_native_noise_rate,
+        "split_sizes": split_sizes,
+        "split_rates": split_rates,
         "warnings": warnings,
     }
 
@@ -184,6 +263,28 @@ def run_training(cfg: Config, dest: str | Path | None = None) -> TrainingReport:
         dest,
     )
 
+    if figures_dir is not None:
+        # Imported here rather than at module scope: matplotlib is needed only
+        # for figures, so a training run that wants none does not pay to import
+        # it, and the dependency stays off the serving path entirely.
+        from ml.viz.figures import render_training_figures
+
+        report.figures = render_training_figures(
+            X=X,
+            frames=frames,
+            detectors=detectors,
+            live_names=[d.name for d in live],
+            live_flags=live_flags,
+            votes=votes,
+            ensemble_labels=ensemble_labels,
+            required=votes_required(len(live), threshold),
+            dest=figures_dir,
+            surrogate_auc=surrogate.auc,
+            random_state=cfg.get("detectors.random_state"),
+            max_embedding_rows=cfg.get("viz.max_embedding_rows", 2000),
+            pca_components=cfg.get("viz.pca_components", 0.95),
+        )
+
     return report
 
 
@@ -198,6 +299,24 @@ def format_report(report: TrainingReport) -> str:
     lines.append(
         f"  dbscan native noise rate: {report.dbscan_native_noise_rate:.2%}"
     )
+
+    if report.split_rates:
+        sizes = report.split_sizes
+        lines.append("")
+        lines.append(
+            "=== HELD-OUT FLAG RATE "
+            f"(train {sizes['train']} / val {sizes['validation']} / "
+            f"test {sizes['test']}) ==="
+        )
+        lines.append(f"  {'detector':<20} {'train':>8} {'val':>8} {'test':>8}")
+        for name, rates in report.split_rates.items():
+            lines.append(
+                f"  {name:<20} {rates['train']:>7.2%} "
+                f"{rates['validation']:>7.2%} {rates['test']:>7.2%}"
+            )
+        lines.append(
+            "  fitted on train only; the shipped detectors are refitted on all rows"
+        )
 
     lines.append("")
     lines.append("=== PAIRWISE AGREEMENT (Jaccard, live detectors) ===")
@@ -228,6 +347,11 @@ def format_report(report: TrainingReport) -> str:
     lines.append(f"  held-out AUC:       {report.surrogate_auc:.4f}")
     lines.append(f"  held-out agreement: {report.surrogate_agreement:.4f}")
 
+    if report.figures:
+        lines.append("")
+        lines.append("=== FIGURES ===")
+        lines.extend(f"  {path}" for path in report.figures)
+
     if report.warnings:
         lines.append("")
         lines.append("=== WARNINGS ===")
@@ -236,9 +360,28 @@ def format_report(report: TrainingReport) -> str:
     return "\n".join(lines)
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--figures",
+        nargs="?",
+        const="",
+        default=None,
+        metavar="DIR",
+        help=(
+            "render the diagnostic figures. Defaults to <artifact dir>/figures; "
+            "pass a path to write them elsewhere. Omit the flag and none are drawn."
+        ),
+    )
+    args = parser.parse_args(argv)
+
     cfg = Config.load()
-    report = run_training(cfg)
+
+    figures_dir: str | Path | None = None
+    if args.figures is not None:
+        figures_dir = args.figures or Path(cfg.get("storage.local_dir")) / "figures"
+
+    report = run_training(cfg, figures_dir=figures_dir)
     print(format_report(report))
 
 
