@@ -7,3 +7,9 @@ artifacts/
 final.ipynb
 .git/
 .superpowers/
+
+# Excluded from the build context, not from the image: the dashboard-build
+# stage in backend/Dockerfile runs npm ci and npm run build itself, so a local
+# node_modules (44MB) and a possibly stale dist would only be copied over.
+dashboard/node_modules/
+dashboard/dist/
