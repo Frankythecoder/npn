@@ -49,6 +49,129 @@ IGNORED_COLUMNS = ("IP Address", "MerchantID", "PreviousTransactionDate")
 
 NULL_TOKENS = frozenset({"", "na", "n/a", "nan", "null", "none"})
 
+# Every header this module recognises by its real name. A name in here is never
+# reinterpreted -- synonym matching is a fallback for headers the file does not
+# already spell correctly, never an override of one that does.
+CANONICAL_COLUMNS = frozenset(RAW_INPUT_FIELDS) | {LABEL_COLUMN} | set(IGNORED_COLUMNS)
+
+
+def _match_key(name: Any) -> str:
+    """Fold a header to its comparison form: case and punctuation removed.
+
+    "Session Length (Minutes)", "session_length_minutes" and
+    "SESSION-LENGTH-MINUTES" are one spelling as far as matching is concerned,
+    so the table below needs one entry rather than a dozen.
+    """
+    return "".join(ch for ch in str(name).lower() if ch.isalnum())
+
+
+# Header synonyms, keyed by _match_key.
+#
+# The float is a multiplier applied to the parsed value. A plain rename is 1.0.
+# A header that names a *different unit* to the one the model was trained on
+# converts instead: TransactionDuration is seconds throughout training data, so
+# a column calling itself minutes is scaled by 60. Reading a five-minute session
+# as `5` would not be a near-miss -- it would place an ordinary row deep in the
+# tail of the distribution and flag it.
+#
+# Deliberately conservative. A synonym earns its place by being unambiguous in a
+# transaction file; anything that could plausibly mean two different columns
+# ("value", "time", "id") is left out, because a wrong match is worse than no
+# match -- an unmatched column is merely filled from the training default, and
+# says so.
+COLUMN_ALIASES: dict[str, tuple[str, float]] = {
+    # TransactionAmount
+    "amount": ("TransactionAmount", 1.0),
+    "txnamount": ("TransactionAmount", 1.0),
+    "trxamount": ("TransactionAmount", 1.0),
+    "transactionvalue": ("TransactionAmount", 1.0),
+    "transactionamt": ("TransactionAmount", 1.0),
+    "amountusd": ("TransactionAmount", 1.0),
+    # AccountBalance
+    "balance": ("AccountBalance", 1.0),
+    "accountbal": ("AccountBalance", 1.0),
+    "acctbalance": ("AccountBalance", 1.0),
+    "availablebalance": ("AccountBalance", 1.0),
+    "currentbalance": ("AccountBalance", 1.0),
+    # CustomerAge
+    "age": ("CustomerAge", 1.0),
+    "clientage": ("CustomerAge", 1.0),
+    "userage": ("CustomerAge", 1.0),
+    "accountholderage": ("CustomerAge", 1.0),
+    # TransactionDuration -- seconds in training.
+    "duration": ("TransactionDuration", 1.0),
+    "durationseconds": ("TransactionDuration", 1.0),
+    "durationsecs": ("TransactionDuration", 1.0),
+    "durationsec": ("TransactionDuration", 1.0),
+    "sessionlength": ("TransactionDuration", 1.0),
+    "sessionduration": ("TransactionDuration", 1.0),
+    "sessionlengthseconds": ("TransactionDuration", 1.0),
+    "sessionlengthinseconds": ("TransactionDuration", 1.0),
+    "elapsedseconds": ("TransactionDuration", 1.0),
+    "durationminutes": ("TransactionDuration", 60.0),
+    "durationmins": ("TransactionDuration", 60.0),
+    "durationmin": ("TransactionDuration", 60.0),
+    "sessionlengthminutes": ("TransactionDuration", 60.0),
+    "sessionlengthinminutes": ("TransactionDuration", 60.0),
+    "sessionlengthmins": ("TransactionDuration", 60.0),
+    "elapsedminutes": ("TransactionDuration", 60.0),
+    # LoginAttempts
+    "logins": ("LoginAttempts", 1.0),
+    "loginattemptcount": ("LoginAttempts", 1.0),
+    "numloginattempts": ("LoginAttempts", 1.0),
+    "signinattempts": ("LoginAttempts", 1.0),
+    "authattempts": ("LoginAttempts", 1.0),
+    # TransactionType
+    "txntype": ("TransactionType", 1.0),
+    "trxtype": ("TransactionType", 1.0),
+    "debitcredit": ("TransactionType", 1.0),
+    "creditdebit": ("TransactionType", 1.0),
+    # Channel
+    "transactionchannel": ("Channel", 1.0),
+    "accesschannel": ("Channel", 1.0),
+    "paymentchannel": ("Channel", 1.0),
+    # CustomerOccupation
+    "occupation": ("CustomerOccupation", 1.0),
+    "profession": ("CustomerOccupation", 1.0),
+    "customerjob": ("CustomerOccupation", 1.0),
+    "jobtitle": ("CustomerOccupation", 1.0),
+    # Location
+    "city": ("Location", 1.0),
+    "transactionlocation": ("Location", 1.0),
+    "customerlocation": ("Location", 1.0),
+    "transactioncity": ("Location", 1.0),
+    # AccountID
+    "accountnumber": ("AccountID", 1.0),
+    "accountno": ("AccountID", 1.0),
+    "acctid": ("AccountID", 1.0),
+    "acctno": ("AccountID", 1.0),
+    # DeviceID
+    "device": ("DeviceID", 1.0),
+    "deviceidentifier": ("DeviceID", 1.0),
+    "terminalid": ("DeviceID", 1.0),
+    # TransactionDate
+    "transactiontimestamp": ("TransactionDate", 1.0),
+    "txndate": ("TransactionDate", 1.0),
+    "transactiondatetime": ("TransactionDate", 1.0),
+    "bookingdate": ("TransactionDate", 1.0),
+    # TransactionID -- a label, never scored.
+    "txnid": ("TransactionID", 1.0),
+    "transactionref": ("TransactionID", 1.0),
+    "transactionreference": ("TransactionID", 1.0),
+    "referenceid": ("TransactionID", 1.0),
+}
+
+# A synonym that shadows a real header would be unreachable, and one pointing at
+# a column that does not exist would silently never match. Both fail at import
+# rather than at upload time.
+assert not (
+    {alias for alias in COLUMN_ALIASES}
+    & {_match_key(column) for column in CANONICAL_COLUMNS}
+), "a synonym shadows a canonical column name"
+assert {target for target, _ in COLUMN_ALIASES.values()} <= CANONICAL_COLUMNS, (
+    "a synonym points at a column csvingest does not know"
+)
+
 # Every scoring column is either fillable or synthesisable. If a future feature
 # adds a raw input, this fails at import rather than silently leaving the new
 # column absent from uploaded rows.
@@ -122,6 +245,61 @@ def _fill_warning(column: str, value: Any) -> str:
     )
 
 
+def _alias_warning(original: str, column: str, scale: float) -> str:
+    if scale == 1.0:
+        return f"{original!r} read as {column}"
+    return (
+        f"{original!r} read as {column}, converted to the unit the model was "
+        f"trained on (x{scale:g})"
+    )
+
+
+def resolve_columns(
+    columns: list[str],
+) -> tuple[list[str], dict[str, float], list[tuple[str, str]]]:
+    """Rewrite an uploaded header so recognised synonyms use their real names.
+
+    Returns (resolved, scales, matches):
+
+    * `resolved` is `columns` with each matched synonym replaced by the column
+      it means, so everything downstream keeps working on canonical names and
+      needs no knowledge of aliasing at all.
+    * `scales` maps a resolved column to the multiplier that converts it into
+      the unit the model was trained on. Absent means 1.0.
+    * `matches` is the (header, column) pairs that were rewritten, so a row can
+      report what was assumed about it.
+
+    A canonical header always wins over a synonym for the same column, and the
+    first synonym wins over any later one, so the result never depends on
+    column order beyond "leftmost claims it".
+    """
+    resolved = list(columns)
+    scales: dict[str, float] = {}
+    matches: list[tuple[str, str]] = []
+
+    claimed = {column for column in columns if column in CANONICAL_COLUMNS}
+
+    for index, name in enumerate(columns):
+        if name in CANONICAL_COLUMNS:
+            continue
+        entry = COLUMN_ALIASES.get(_match_key(name))
+        if entry is None:
+            continue
+        column, scale = entry
+        if column in claimed:
+            # The file also carries the real column, or an earlier synonym got
+            # there first. Either way this one is surplus, and guessing between
+            # two candidates is worse than ignoring the second.
+            continue
+        claimed.add(column)
+        resolved[index] = column
+        if scale != 1.0:
+            scales[column] = scale
+        matches.append((name, column))
+
+    return resolved, scales, matches
+
+
 def normalise_rows(
     columns: list[str],
     rows: list[list[Any]],
@@ -137,6 +315,15 @@ def normalise_rows(
     Returns (accepted, rejected). A bad row is rejected on its own; only a file
     with no crucial column at all raises.
     """
+    # Recognised synonyms become their real names before anything else looks at
+    # the header, so the gate, the fill logic and the parser all go on seeing
+    # canonical columns and none of them need to know aliasing exists.
+    columns, scales, aliased = resolve_columns(columns)
+    alias_warnings = [
+        _alias_warning(original, column, scales.get(column, 1.0))
+        for original, column in aliased
+    ]
+
     if not any(column in CRUCIAL_COLUMNS for column in columns):
         raise MissingCrucialColumns(
             "the file must contain at least one of "
@@ -177,7 +364,7 @@ def normalise_rows(
             text = str(value).strip()
             if column in NUMERIC_COLUMNS:
                 try:
-                    payload[column] = float(text)
+                    payload[column] = float(text) * scales.get(column, 1.0)
                 except ValueError:
                     reason = f"{column} is not a number: {text!r}"
                     break
@@ -188,7 +375,8 @@ def normalise_rows(
             rejected.append({"row": line, "reason": reason})
             continue
 
-        warnings: list[str] = []
+        # Renames first: they say what the rest of the row's warnings are about.
+        warnings: list[str] = list(alias_warnings)
 
         for column in absent_fillable:
             payload[column] = defaults[column]

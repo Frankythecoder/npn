@@ -7,6 +7,7 @@ from backend.csvingest import (
     MissingCrucialColumns,
     defaults_from_bundle,
     normalise_rows,
+    resolve_columns,
 )
 from ml.features.engineer import CATEGORICAL_LEVELS, FEATURE_COLUMNS, FeatureArtifacts
 
@@ -232,3 +233,94 @@ def test_transaction_id_is_carried_through_when_supplied(defaults):
 def test_a_missing_transaction_id_falls_back_to_the_row_number(defaults):
     accepted, _ = normalise_rows(["TransactionAmount"], [["10"]], defaults)
     assert accepted[0].payload["TransactionID"] == "row-2"
+
+
+# ---------- synonym column headers ----------
+
+
+def test_a_synonym_is_read_as_the_column_it_means(defaults):
+    accepted, _ = normalise_rows(["txn_amount"], [["120.50"]], defaults)
+    assert accepted[0].payload["TransactionAmount"] == 120.50
+
+
+def test_synonym_matching_ignores_case_spacing_and_punctuation(defaults):
+    for header in ("Session Length", "session_length", "SESSION-LENGTH", "sessionlength"):
+        accepted, _ = normalise_rows([header], [["90"]], defaults)
+        assert accepted[0].payload["TransactionDuration"] == 90.0, header
+
+
+def test_a_synonym_naming_minutes_is_converted_to_the_trained_unit(defaults):
+    # TransactionDuration is seconds in training, so a five-minute session is
+    # 300 -- reading it as 5 would put an ordinary row in the tail of the
+    # distribution.
+    accepted, _ = normalise_rows(
+        ["session-length-in-minutes"], [["5"]], defaults
+    )
+    assert accepted[0].payload["TransactionDuration"] == 300.0
+
+
+def test_a_synonym_alone_satisfies_the_crucial_column_gate(defaults):
+    accepted, rejected = normalise_rows(["session_length_minutes"], [["5"]], defaults)
+    assert rejected == []
+    assert len(accepted) == 1
+
+
+def test_the_canonical_name_wins_when_both_are_present(defaults):
+    accepted, _ = normalise_rows(
+        ["TransactionDuration", "session_length"], [["90", "999"]], defaults
+    )
+    assert accepted[0].payload["TransactionDuration"] == 90.0
+
+
+def test_only_the_first_of_two_synonyms_for_one_column_is_used(defaults):
+    accepted, _ = normalise_rows(
+        ["session_length", "duration_secs"], [["90", "999"]], defaults
+    )
+    assert accepted[0].payload["TransactionDuration"] == 90.0
+
+
+def test_a_matched_synonym_warns_naming_both_the_header_and_the_column(defaults):
+    accepted, _ = normalise_rows(["txn_amount"], [["120.50"]], defaults)
+    joined = " ".join(accepted[0].warnings)
+    assert "txn_amount" in joined
+    assert "TransactionAmount" in joined
+
+
+def test_a_converted_synonym_says_so_in_its_warning(defaults):
+    accepted, _ = normalise_rows(["duration_minutes"], [["5"]], defaults)
+    joined = " ".join(accepted[0].warnings)
+    assert "60" in joined
+
+
+def test_a_matched_synonym_is_not_also_reported_as_filled(defaults):
+    accepted, _ = normalise_rows(["txn_amount"], [["120.50"]], defaults)
+    filled = [w for w in accepted[0].warnings if "filled with the training default" in w]
+    assert not any("TransactionAmount" in w for w in filled)
+
+
+def test_an_unrecognised_header_is_still_ignored(defaults):
+    # Aliasing must not turn every stray column into a guess.
+    accepted, _ = normalise_rows(
+        ["TransactionAmount", "sensor_reading_7"], [["10", "42"]], defaults
+    )
+    assert "sensor_reading_7" not in accepted[0].payload
+
+
+def test_a_synonym_that_is_not_a_number_is_rejected_by_its_real_name(defaults):
+    accepted, rejected = normalise_rows(["txn_amount"], [["abc"]], defaults)
+    assert accepted == []
+    assert "TransactionAmount" in rejected[0]["reason"]
+
+
+def test_resolve_columns_reports_what_it_matched():
+    resolved, scales, matches = resolve_columns(["txn_amount", "IP Address"])
+    assert resolved == ["TransactionAmount", "IP Address"]
+    assert matches == [("txn_amount", "TransactionAmount")]
+    assert scales == {}
+
+
+def test_resolve_columns_leaves_a_canonical_header_untouched():
+    resolved, scales, matches = resolve_columns(["TransactionAmount"])
+    assert resolved == ["TransactionAmount"]
+    assert matches == []
+    assert scales == {}

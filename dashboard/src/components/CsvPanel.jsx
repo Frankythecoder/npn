@@ -169,6 +169,16 @@ export default function CsvPanel({ onBatch, onBusyChange }) {
             columns={report.supplied}
             tone="ok"
           />
+          {report.matched.length > 0 && (
+            <ColumnGroup
+              label={`Matched by meaning (${report.matched.length})`}
+              columns={report.matched.map(
+                (m) =>
+                  `${m.from} → ${m.to}${m.scale === 1 ? "" : ` ×${m.scale}`}`,
+              )}
+              tone="ok"
+            />
+          )}
           {report.filled.length > 0 && (
             <ColumnGroup
               label={`Filled from training data (${report.filled.length})`}
