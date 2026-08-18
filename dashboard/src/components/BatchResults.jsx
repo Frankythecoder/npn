@@ -25,7 +25,7 @@ const money = new Intl.NumberFormat("en-US", {
  * transaction still happens in the live feed, where a row can be expanded to see
  * the votes and the attribution behind the verdict first.
  */
-export default function BatchResults({ batch, onClose }) {
+export default function BatchResults({ batch }) {
   const flagged = batch.results.filter((r) => r.ensemble.is_anomaly);
   const clear = batch.results.filter((r) => !r.ensemble.is_anomaly);
 
@@ -38,9 +38,6 @@ export default function BatchResults({ batch, onClose }) {
           </div>
           <div className="batch-title">{batch.name}</div>
         </div>
-        <button type="button" className="linkish" onClick={onClose}>
-          Back to live feed
-        </button>
       </div>
 
       <div className="batch-stats">

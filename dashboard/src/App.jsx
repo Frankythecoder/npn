@@ -129,7 +129,7 @@ export default function App() {
 
         <main className="main">
           {batch ? (
-            <BatchResults batch={batch} onClose={() => setBatch(null)} />
+            <BatchResults batch={batch} />
           ) : (
             <LiveFeed
               results={results}
