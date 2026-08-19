@@ -12,7 +12,7 @@ const EDITABLE = [
   { key: "TransactionDuration", label: "Duration (s)", step: "1" },
 ];
 
-export default function InjectPanel({ onScored }) {
+export default function InjectPanel() {
   const [presets, setPresets] = useState([]);
   const [selected, setSelected] = useState(null);
   const [overrides, setOverrides] = useState({});
@@ -67,7 +67,6 @@ export default function InjectPanel({ onScored }) {
 
       const scored = await inject(selected, changed);
       setResult(scored);
-      onScored(scored);
     } catch (err) {
       setError(err.message);
     } finally {

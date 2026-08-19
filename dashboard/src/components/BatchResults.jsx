@@ -1,17 +1,9 @@
 import { Fragment, useState } from "react";
 import ShapChart from "./ShapChart.jsx";
+import { DETECTORS, ResultRow, ResultTable } from "./ResultRow.jsx";
+import Stat from "./Stat.jsx";
 import { decisionKey } from "../decisions.js";
 import { countValidated, loadValidated, persistValidated } from "../validated.js";
-
-// The four detectors that vote, in the registry's canonical order. Looked up by
-// name rather than by position so a change to DETECTOR_ORDER cannot silently
-// retitle a column.
-const DETECTORS = [
-  { name: "isolation_forest", short: "IF", label: "Isolation Forest" },
-  { name: "lof", short: "LOF", label: "Local Outlier Factor" },
-  { name: "one_class_svm", short: "SVM", label: "One-Class SVM" },
-  { name: "dbscan", short: "DBS", label: "DBSCAN" },
-];
 
 const RELATIVE = new Intl.RelativeTimeFormat("en", { numeric: "auto" });
 
@@ -22,12 +14,6 @@ function confirmedAgo(iso) {
   return RELATIVE.format(-Math.round(seconds / 3600), "hour");
 }
 
-const money = new Intl.NumberFormat("en-US", {
-  style: "currency",
-  currency: "USD",
-  maximumFractionDigits: 0,
-});
-
 /**
  * The result of one uploaded file.
  *
@@ -35,24 +21,24 @@ const money = new Intl.NumberFormat("en-US", {
  * and carry no decision to make, so they stay counted in the summary above
  * rather than filling a table nobody reads top to bottom.
  *
- * Each flagged row opens a review drawer carrying the same four model scores
- * and SHAP attribution the live feed shows, so a file can be worked through
- * without scoring its rows again one at a time.
+ * Each flagged row opens a review drawer carrying the four model scores and the
+ * SHAP attribution behind the verdict, so a file can be worked through without
+ * scoring its rows again one at a time.
  *
  * The drawer collects one judgement and one only: whether the row the ensemble
  * called possible fraud was actually fraud. That is a statement about the
- * label, which is what a file review produces. Deciding what to *do* with a
- * transaction — approve it, block it — stays in the live feed.
+ * label, which is what a file review produces.
+ *
+ * The report is restored after a reload rather than rebuilt, so what comes back
+ * is this same view — file name, counts, table and all. See batch.js for what is
+ * kept and what is only counted.
  */
 export default function BatchResults({ batch }) {
-  const flagged = batch.results.filter((r) => r.ensemble.is_anomaly);
-  const clear = batch.results.filter((r) => !r.ensemble.is_anomaly);
-
   // Held here rather than in the table so it survives the table remounting,
   // and seeded from localStorage so a confirmed row stays confirmed across a
   // reload. Keyed by transaction identity, not row position.
   const [validated, setValidated] = useState(loadValidated);
-  const confirmed = countValidated(flagged, validated, decisionKey);
+  const confirmed = countValidated(batch.rows, validated, decisionKey);
 
   function handleValidate(key) {
     setValidated((prev) => {
@@ -78,10 +64,13 @@ export default function BatchResults({ batch }) {
         </div>
       </div>
 
+      {/* Counts are read off the batch rather than recounted from the rows.
+          Only the flagged rows are carried, and a restored report may hold fewer
+          even of those, so recounting here would describe a smaller file. */}
       <div className="batch-stats">
-        <Stat value={batch.results.length} label="scored" />
-        <Stat value={flagged.length} label="flagged" tone="high" />
-        <Stat value={clear.length} label="clear" tone="away" />
+        <Stat value={batch.scored} label="scored" />
+        <Stat value={batch.flagged} label="flagged" tone="high" />
+        <Stat value={batch.cleared} label="clear" tone="away" />
         <Stat value={batch.rejected.length} label="rejected" tone="dim" />
       </div>
 
@@ -110,7 +99,7 @@ export default function BatchResults({ batch }) {
 
       <Section
         title="Flagged as possible fraud"
-        count={flagged.length}
+        count={batch.flagged}
         tone="high"
         empty="No transaction in this file was flagged."
         note={
@@ -119,15 +108,26 @@ export default function BatchResults({ batch }) {
             : null
         }
       >
-        <ResultTable
-          results={flagged}
+        <FlaggedTable
+          results={batch.rows}
           validated={validated}
           onValidate={handleValidate}
         />
+        {batch.partial && (
+          // Only reached when the flagged list was too large to store whole. A
+          // shortened table that says so beats one that reads as the full file.
+          <p className="footnote">
+            Restored with the first{" "}
+            <span className="num">{batch.rows.length.toLocaleString()}</span> of{" "}
+            <span className="num">{batch.flagged.toLocaleString()}</span> flagged
+            rows — the rest were too large to keep. Score the file again for the
+            complete list.
+          </p>
+        )}
         <p className="footnote">
-          The other <span className="num">{clear.length.toLocaleString()}</span>{" "}
+          The other <span className="num">{batch.cleared.toLocaleString()}</span>{" "}
           transactions in this file were cleared and are not listed. They were
-          still scored, and appear in the live feed.
+          still scored, and are counted above.
         </p>
       </Section>
 
@@ -147,15 +147,6 @@ export default function BatchResults({ batch }) {
   );
 }
 
-function Stat({ value, label, tone }) {
-  return (
-    <div className="batch-stat" data-tone={tone}>
-      <span className="num v">{value.toLocaleString()}</span>
-      <span className="micro">{label}</span>
-    </div>
-  );
-}
-
 function Section({ title, count, tone, empty, note, children }) {
   return (
     <section className="batch-section">
@@ -170,122 +161,49 @@ function Section({ title, count, tone, empty, note, children }) {
   );
 }
 
-function ResultTable({ results, validated, onValidate }) {
+function FlaggedTable({ results, validated, onValidate }) {
   // One drawer at a time: these rows are read in sequence, and leaving earlier
   // ones open pushes the row being worked on off the screen.
   const [openKey, setOpenKey] = useState(null);
 
   return (
-    <div className="batch-wrap">
-      <div className="batch-table">
-        <div className="batch-row batch-header">
-          <span>Verdict</span>
-          <span>Transaction</span>
-          <span className="r">Amount</span>
-          {DETECTORS.map((d) => (
-            <span className="r" key={d.name} title={`${d.label} score percentile`}>
-              {d.short}
-            </span>
-          ))}
-          {/* Holds the chevron's column open in the header. */}
-          <span aria-hidden="true" />
-        </div>
+    <ResultTable>
+      {results.map((result, index) => {
+        const key = `${result.transaction_id || "tx"}-${result.scored_at}-${index}`;
+        const isOpen = key === openKey;
+        // Confirmation is keyed by transaction identity, not row position, so
+        // it follows the transaction rather than its place in this file.
+        const identity = decisionKey(result);
+        const confirmed = Boolean(validated[identity]);
 
-        {results.map((result, index) => {
-          const key = `${result.transaction_id || "tx"}-${result.scored_at}-${index}`;
-          const isOpen = key === openKey;
-          // Confirmation is keyed by transaction identity, not row position, so
-          // it follows the transaction rather than its place in this file.
-          const identity = decisionKey(result);
-          const confirmed = Boolean(validated[identity]);
-
-          return (
-            <Fragment key={key}>
-              <Row
-                result={result}
-                isOpen={isOpen}
-                confirmed={confirmed}
-                onToggle={() => setOpenKey(isOpen ? null : key)}
-              />
-              {isOpen && (
-                <ReviewDrawer
-                  result={result}
-                  confirmed={confirmed}
-                  validatedAt={validated[identity]?.at}
-                  onValidate={() => onValidate(identity)}
-                />
-              )}
-            </Fragment>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-function Row({ result, isOpen, confirmed, onToggle }) {
-  const { ensemble, detectors } = result;
-  const byName = Object.fromEntries(detectors.map((d) => [d.name, d]));
-
-  return (
-    <button
-      type="button"
-      className="batch-row"
-      data-confirmed={confirmed}
-      aria-expanded={isOpen}
-      onClick={onToggle}
-      title={
-        confirmed
-          ? `Confirmed as actual fraud. ${result.explanation.plain_english}`
-          : result.explanation.plain_english
-      }
-    >
-      {/* The model's verdict is a probability; a confirmation is not. Once an
-          analyst has validated the row it stops reading as "possible". */}
-      <span
-        className="verdict"
-        data-anomaly={ensemble.is_anomaly}
-        data-confirmed={confirmed}
-      >
-        {confirmed ? "Fraud" : ensemble.is_anomaly ? "Flagged" : "Clear"}
-        <span className="tally num">
-          {confirmed ? "confirmed" : `${ensemble.votes_for}/${ensemble.votes_total}`}
-        </span>
-      </span>
-
-      <span className="txid">{result.transaction_id || "—"}</span>
-
-      <span className="amount num r">
-        {money.format(Number(result.raw?.TransactionAmount ?? 0))}
-      </span>
-
-      {DETECTORS.map((d) => {
-        const cell = byName[d.name];
         return (
-          <span
-            className="score num r"
-            key={d.name}
-            data-cast={cell?.flag === 1}
-            title={cell ? `${d.label}: raw score ${cell.score.toFixed(4)}` : d.label}
-          >
-            {cell ? cell.score_percentile.toFixed(1) : "—"}
-          </span>
+          <Fragment key={key}>
+            <ResultRow
+              result={result}
+              isOpen={isOpen}
+              confirmed={confirmed}
+              onToggle={() => setOpenKey(isOpen ? null : key)}
+            />
+            {isOpen && (
+              <ReviewDrawer
+                result={result}
+                confirmed={confirmed}
+                validatedAt={validated[identity]?.at}
+                onValidate={() => onValidate(identity)}
+              />
+            )}
+          </Fragment>
         );
       })}
-
-      <span className="chev" aria-hidden="true">
-        ›
-      </span>
-    </button>
+    </ResultTable>
   );
 }
 
 /**
  * The review drawer for one flagged row.
  *
- * Deliberately the same two readings the live feed's detail panel gives — how
- * each voting model scored, and which features SHAP says drove it — because an
- * operator who has learned to read one should not have to learn the other.
+ * Two readings: how each voting model scored, and which features SHAP says
+ * drove it.
  *
  * The confirmation control sits below them rather than above, because the
  * judgement it collects is only worth making once the votes and the attribution

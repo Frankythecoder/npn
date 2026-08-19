@@ -43,9 +43,6 @@ const jsonPost = (body) => ({
 
 export const getPresets = () => request("/demo/presets");
 
-export const getRecent = (limit = 50) =>
-  request(`/transactions/recent?limit=${limit}`);
-
 export const inject = (preset, overrides) =>
   request("/demo/inject", jsonPost({ preset, overrides }));
 

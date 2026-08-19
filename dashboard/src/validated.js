@@ -5,9 +5,8 @@
  * inside it. A decision is an action taken on a transaction — approve it, block
  * it. This is a statement about the label: the ensemble said "possible fraud",
  * and the analyst is confirming it was real. Keeping them apart means
- * confirming a row in the batch report does not silently also block it in the
- * live feed, and it keeps a third state out of DecisionBar, which renders
- * exactly two and would mislabel anything else.
+ * confirming a row in the batch report is not silently also an action taken on
+ * that transaction.
  *
  * Same storage contract as decisions: localStorage, so it survives a reload but
  * is local to this browser. Nothing here is sent to the API — the drawer says
