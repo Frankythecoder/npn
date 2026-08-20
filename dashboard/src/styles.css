@@ -353,102 +353,6 @@ button {
   font-size: 13px;
 }
 
-/* ---------- feed ---------- */
-
-.feed {
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  overflow: hidden;
-}
-
-.feed-row {
-  display: grid;
-  grid-template-columns: 74px minmax(0, 1fr) 108px 52px 92px 26px;
-  align-items: center;
-  gap: 14px;
-  width: 100%;
-  padding: 11px 14px;
-  background: var(--surface);
-  border: none;
-  border-bottom: 1px solid var(--line);
-  text-align: left;
-  transition: background 120ms ease;
-}
-
-/* While a CSV upload is scoring the feed is a read-only ticker: neither the
-   review cell nor the expand chevron is rendered, so their columns go too
-   rather than leaving holes on the right. Specificity has to beat the
-   responsive override below, which is why the narrow variant is repeated there
-   rather than relying on source order. */
-.feed[data-scoring="true"] .feed-row {
-  grid-template-columns: 74px minmax(0, 1fr) 108px 52px;
-  cursor: default;
-}
-
-/* The row is a disabled button while scoring — kill the affordance that says
-   otherwise, without fading it out: the numbers still have to be readable. */
-.feed[data-scoring="true"] .feed-row:hover {
-  background: var(--surface);
-}
-
-.feed-row:last-of-type {
-  border-bottom: none;
-}
-
-.feed-row:hover {
-  background: var(--surface-hi);
-}
-
-.feed-row .txid {
-  font-family: var(--mono);
-  font-size: 12px;
-  color: var(--ink-dim);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.feed-row .amount {
-  text-align: right;
-  font-size: 13px;
-}
-
-.feed-row .tally {
-  text-align: right;
-  font-size: 12px;
-  color: var(--ink-dim);
-}
-
-.feed-row .chev {
-  color: var(--ink-faint);
-  transition: transform 160ms ease;
-  justify-self: center;
-}
-
-.feed-row[aria-expanded="true"] .chev {
-  transform: rotate(90deg);
-}
-
-.feed-row.is-new {
-  animation: settle 520ms ease-out;
-}
-
-@keyframes settle {
-  from {
-    background: rgba(245, 165, 36, 0.14);
-  }
-  to {
-    background: var(--surface);
-  }
-}
-
-.empty {
-  padding: 34px 16px;
-  text-align: center;
-  color: var(--ink-dim);
-  background: var(--surface);
-}
-
 /* ---------- detail ---------- */
 
 .detail {
@@ -611,70 +515,11 @@ button {
   .detail {
     grid-template-columns: 1fr;
   }
-  .feed-row {
-    grid-template-columns: 62px minmax(0, 1fr) 88px 78px 26px;
-  }
-  .feed[data-scoring="true"] .feed-row {
-    grid-template-columns: 62px minmax(0, 1fr) 88px;
-  }
-  .feed-row .tally {
-    display: none;
-  }
 }
 
 /* ---------- analyst decision ----------
-   The model's verdict is a recommendation. The analyst's call is recorded
-   beside it, and where the two disagree the row is marked as an override —
-   those are the cases worth counting, because each is a labelled example of
-   the ensemble being wrong. */
-
-.review {
-  justify-self: end;
-}
-
-.badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  font-size: 10px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  font-weight: 650;
-  padding: 3px 7px;
-  border-radius: 3px;
-  border: 1px solid transparent;
-  white-space: nowrap;
-}
-
-.badge.pending {
-  color: var(--ink-faint);
-  border-color: var(--line);
-}
-
-.badge[data-verdict="approve"] {
-  color: var(--away);
-  border-color: rgba(46, 196, 182, 0.35);
-  background: rgba(46, 196, 182, 0.1);
-}
-
-.badge[data-verdict="block"] {
-  color: var(--toward-high);
-  border-color: rgba(229, 72, 77, 0.35);
-  background: rgba(229, 72, 77, 0.1);
-}
-
-/* A dot, not a colour change: the badge already carries approve/block, and
-   overriding is a second, independent fact about the same decision. */
-.flagdot {
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: var(--toward-low);
-}
-
-.override-count {
-  color: var(--toward-low);
-}
+   The model's verdict is a recommendation; the analyst's call is recorded
+   beside it. */
 
 .decision {
   border-top: 1px solid var(--line);
@@ -1191,14 +1036,15 @@ button.batch-row {
   padding-top: 14px;
 }
 
+/* Sized to its label rather than to the column: the confirmation is one small
+   act at the end of a drawer, not the drawer's headline. */
 .validate {
-  width: 100%;
-  padding: 9px 12px;
+  padding: 6px 11px;
   border-radius: var(--radius);
   border: 1px solid var(--toward-high);
   background: transparent;
   color: var(--toward-high);
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
   transition:
     background 140ms ease,
